@@ -25,9 +25,10 @@
  */
 
 
-private import tango.core.BitManip;
-private import tango.stdc.string;
-private import tango.stdc.stdlib;
+import tango.core.BitManip;
+import tango.stdc.string;
+import tango.stdc.stdlib;
+
 private extern (C) void onOutOfMemoryError();
 
 

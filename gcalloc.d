@@ -27,7 +27,7 @@
 
 version (Win32)
 {
-    private import tango.sys.win32.UserGdi;
+    import tango.sys.win32.UserGdi;
 
     alias int pthread_t;
 
@@ -40,14 +40,14 @@ version (Win32)
 }
 else version (Posix)
 {
-    private import tango.stdc.posix.sys.mman;
-    private import tango.stdc.stdlib;
+    import tango.stdc.posix.sys.mman;
+    import tango.stdc.stdlib;
 
     //version = GC_Use_Alloc_MMap;
 }
 else
 {
-    private import tango.stdc.stdlib;
+    import tango.stdc.stdlib;
 
     //version = GC_Use_Alloc_Malloc;
 }
@@ -174,7 +174,7 @@ else static if (is(typeof(malloc))) // else version (GC_Use_Alloc_Malloc)
     //       after PAGESIZE bytes used by the GC.
 
 
-    private import gcx; // for PAGESIZE
+    import gcx; // for PAGESIZE
 
 
     const size_t PAGE_MASK = PAGESIZE - 1;

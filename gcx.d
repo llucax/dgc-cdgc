@@ -46,15 +46,16 @@ version = MULTI_THREADED;       // produce multithreaded version
 
 /***************************************************/
 
-private import gcbits;
-private import gcstats;
-private import gcalloc;
+import gcbits;
+import gcstats;
+import gcalloc;
 
-private import cstdlib = tango.stdc.stdlib : calloc, free, malloc, realloc;
-private import cstring = tango.stdc.string : memcpy, memmove, memset;
-debug(THREADINVARIANT) private import tango.stdc.posix.pthread;
-debug(PRINTF) private import tango.stdc.posix.pthread : pthread_self, pthread_t;
-debug private import tango.stdc.stdio : printf;
+import cstdlib = tango.stdc.stdlib : calloc, free, malloc, realloc;
+import cstring = tango.stdc.string : memcpy, memmove, memset;
+
+debug(THREADINVARIANT) import tango.stdc.posix.pthread;
+debug(PRINTF) import tango.stdc.posix.pthread : pthread_self, pthread_t;
+debug import tango.stdc.stdio : printf;
 
 version (GNU)
 {
@@ -62,7 +63,7 @@ version (GNU)
     //      subdirectory is elsewhere.  Instead, perhaps the functions
     //      could be declared directly or some other resolution could
     //      be found.
-    private import gcc.builtins; // for __builtin_unwind_init
+    import gcc.builtins; // for __builtin_unwind_init
 }
 
 
