@@ -58,6 +58,9 @@ $B/%.o: %.d
 	$(if $V,,@echo '  $(DC) $@')
 	$(if $V,,@) $(DC) $(DCFLAGS) $(DC_OBJ_OPT) $(DC_OUTPUT_OPTION) $<
 
+clean:
+	$(if $V,,@echo '  $(RM) $B')
+	$(if $V,,@) $(RM) -r $B
 
 __dummy := $(shell mkdir -p $B)
 
