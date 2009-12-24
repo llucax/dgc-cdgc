@@ -5,6 +5,6 @@
 #
 # To run "myprogram my arguments" using the CDGC.
 
-export LD_PRELOAD=./cdgc.so
+export LD_PRELOAD=./build/cdgc.so
 
 exec "$@"

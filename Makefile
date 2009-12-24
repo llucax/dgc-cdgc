@@ -1,4 +1,7 @@
 
+# Build directory
+B := build
+
 # D compiler to use
 DC := ldc
 
@@ -36,22 +39,25 @@ sources := \
 	gcx.d
 
 # Default target
-all: cdgc.so
+all: $B/cdgc.so
 
 # Make the GC shared object
-cdgc.so: $(sources:.d=.o)
+$B/cdgc.so: $(patsubst %.d,$B/%.o,$(sources))
 
 
 # General pattern rules
 #######################
 
-%.so: DCFLAGS += $(DC_SO_OPT)
+$B/%.so: DCFLAGS += $(DC_SO_OPT)
 
-%.so:
+$B/%.so:
 	$(if $V,,@echo '  $(LD) $@')
 	$(if $V,,@) $(LD) $(LDFLAGS) $(LD_SO_OPT) $(LD_OUTPUT_OPTION) $^
 
-%.o: %.d
+$B/%.o: %.d
 	$(if $V,,@echo '  $(DC) $@')
 	$(if $V,,@) $(DC) $(DCFLAGS) $(DC_OBJ_OPT) $(DC_OUTPUT_OPTION) $<
+
+
+__dummy := $(shell mkdir -p $B)
 
