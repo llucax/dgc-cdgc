@@ -1,0 +1,10 @@
+#!/bin/sh
+# This is a small wrapper script to run a D program using the CDGC.
+#
+# Just run: ./cdgcrun myprogram my arguments
+#
+# To run "myprogram my arguments" using the CDGC.
+
+export LD_PRELOAD=./cdgc.so
+
+exec "$@"
