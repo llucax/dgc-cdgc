@@ -32,11 +32,11 @@ LD_OUTPUT_OPTION = -o $@
 
 # GC sources
 sources := \
-	gc.d \
-	gcalloc.d \
-	gcbits.d \
-	gcstats.d \
-	gcx.d
+	gc/gc.d \
+	gc/alloc.d \
+	gc/bits.d \
+	gc/stats.d \
+	gc/x.d
 
 # Default target
 all: $B/cdgc.so

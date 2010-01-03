@@ -24,6 +24,8 @@
  * Authors:   Walter Bright, David Friedman, Sean Kelly
  */
 
+module gc.x;
+
 // D Programming Language Garbage Collector implementation
 
 /************** Debugging ***************************/
@@ -46,9 +48,9 @@ version = MULTI_THREADED;       // produce multithreaded version
 
 /***************************************************/
 
-import gcbits;
-import gcstats;
-import gcalloc;
+import gc.bits;
+import gc.stats;
+import gc.alloc;
 
 import cstdlib = tango.stdc.stdlib : calloc, free, malloc, realloc;
 import cstring = tango.stdc.string : memcpy, memmove, memset;

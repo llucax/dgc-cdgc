@@ -24,6 +24,7 @@
  * Authors:   Walter Bright, David Friedman, Sean Kelly
  */
 
+module gc.bits;
 
 import tango.core.BitManip;
 import tango.stdc.string;

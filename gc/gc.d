@@ -24,8 +24,10 @@
  * Authors:   Walter Bright, Sean Kelly
  */
 
-import gcx;
-import gcstats;
+module gc.gc;
+
+import gc.x;
+import gc.stats;
 import tango.stdc.stdlib;
 
 version=GCCLASS;
