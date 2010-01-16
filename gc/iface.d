@@ -28,7 +28,7 @@ module gc.iface;
 
 import gc.gc;
 import gc.stats;
-import tango.stdc.stdlib;
+import gc.c;
 
 version=GCCLASS;
 
@@ -67,13 +67,13 @@ extern (C) void gc_init()
     {   void* p;
         ClassInfo ci = GC.classinfo;
 
-        p = tango.stdc.stdlib.malloc(ci.init.length);
+        p = malloc(ci.init.length);
         (cast(byte*)p)[0 .. ci.init.length] = ci.init[];
         _gc = cast(GC)p;
     }
     else
     {
-        _gc = cast(GC*) tango.stdc.stdlib.calloc(1, GC.sizeof);
+        _gc = cast(GC*) calloc(1, GC.sizeof);
     }
     _gc.initialize();
     version (DigitalMars) version(OSX) {
@@ -96,7 +96,7 @@ extern (C) void gc_term()
         //       Often this probably doesn't matter much since the app is
         //       supposed to be shutting down anyway, but for example tests might
         //       crash (and be considerd failed even if the test was ok).
-        //       thus this is not the default and should be enabled by 
+        //       thus this is not the default and should be enabled by
         //       I'm disabling cleanup for now until I can think about it some
         //       more.
         //

@@ -26,9 +26,7 @@
 
 module gc.bits;
 
-import tango.core.BitManip;
-import tango.stdc.string;
-import tango.stdc.stdlib;
+import gc.libc;
 
 private extern (C) void onOutOfMemoryError();
 

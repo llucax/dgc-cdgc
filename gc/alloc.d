@@ -26,31 +26,57 @@
 
 module gc.alloc;
 
-version (Win32)
-{
-    import tango.sys.win32.UserGdi;
-
-    alias int pthread_t;
-
-    pthread_t pthread_self()
-    {
-        return cast(pthread_t) GetCurrentThreadId();
+// C OS-specific API
+private extern (C) {
+    version (Win32) {
+        alias void* POINTER;
+        alias POINTER LPVOID;
+        alias uint DWORD;
+        alias int WINBOOL;
+        enum: DWORD {
+            PAGE_READWRITE = 4,
+            MEM_RESERVE = 8192,
+            MEM_COMMIT = 4096,
+            MEM_DECOMMIT = 16384,
+            MEM_RELEASE = 32768,
+        }
+        LPVOID VirtualAlloc(LPVOID, DWORD, DWORD, DWORD);
+        WINBOOL VirtualFree(LPVOID, DWORD, DWORD);
     }
-
-    //version = GC_Use_Alloc_Win32;
-}
-else version (Posix)
-{
-    import tango.stdc.posix.sys.mman;
-    import tango.stdc.stdlib;
-
-    //version = GC_Use_Alloc_MMap;
-}
-else
-{
-    import tango.stdc.stdlib;
-
-    //version = GC_Use_Alloc_Malloc;
+    else version (Posix) {
+        version (linux) enum: bool { OPTIONAL_LARGEFILE_SUPPORT = true }
+        else version (solaris) enum: bool { OPTIONAL_LARGEFILE_SUPPORT = true }
+        else enum: bool { OPTIONAL_LARGEFILE_SUPPORT = false }
+        static if (OPTIONAL_LARGEFILE_SUPPORT)
+            enum: bool { USE_LARGEFILE64 = ((void*).sizeof == 4) }
+        else
+            enum: bool { USE_LARGEFILE64 = false }
+        static if (USE_LARGEFILE64 || (void*).sizeof > int.sizeof)
+            alias long off_t;
+        else
+            alias int off_t;
+        enum: int {
+            PROT_NONE = 0x0,
+            PROT_READ = 0x1,
+            PROT_WRITE = 0x2,
+            PROT_EXEC = 0x4,
+            MAP_SHARED = 0x01,
+            MAP_PRIVATE = 0x02,
+            MAP_FIXED = 0x10,
+        }
+        const MAP_FAILED = cast(void*) -1;
+        // Non-standard, but needed
+        version (linux) { enum: int { MAP_ANON = 0x20 } }
+        else version (darwin) { enum: int { MAP_ANON = 0x1000 } }
+        else version (freebsd) { enum: int { MAP_ANON = 0x1000 } }
+        else version (solaris) { enum: int { MAP_ANON = 0x100 } }
+        void* mmap(void*, size_t, int, int, int, off_t);
+        int munmap(void*, size_t);
+    }
+    else {
+        // Standard C library
+        import gc.libc;
+    }
 }
 
 /+

@@ -36,6 +36,7 @@ sources := \
 	gc/alloc.d \
 	gc/bits.d \
 	gc/stats.d \
+	gc/libc.d \
 	gc/gc.d
 
 # Default target
