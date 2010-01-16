@@ -32,7 +32,6 @@ module gc.gc;
 
 //debug = PRINTF;               // turn on printf's
 //debug = COLLECT_PRINTF;       // turn on printf's
-//debug = THREADINVARIANT;      // check thread integrity
 //debug = LOGGING;              // log allocations / frees
 //debug = MEMSTOMP;             // stomp on memory
 //debug = SENTINEL;             // add underrun/overrrun protection
@@ -55,8 +54,6 @@ import gc.alloc;
 import cstdlib = tango.stdc.stdlib : calloc, free, malloc, realloc;
 import cstring = tango.stdc.string : memcpy, memmove, memset;
 
-debug(THREADINVARIANT) import tango.stdc.posix.pthread;
-debug(PRINTF) import tango.stdc.posix.pthread : pthread_self, pthread_t;
 debug import tango.stdc.stdio : printf;
 
 version (GNU)
@@ -250,26 +247,11 @@ class GC
 
     void Dtor()
     {
-        version (linux)
-        {
-            //debug(PRINTF) printf("Thread %x ", pthread_self());
-            //debug(PRINTF) printf("GC.Dtor()\n");
-        }
-
         if (gcx)
         {
             gcx.Dtor();
             cstdlib.free(gcx);
             gcx = null;
-        }
-    }
-
-
-    invariant
-    {
-        if (gcx)
-        {
-            gcx.thread_Invariant();
         }
     }
 
@@ -448,7 +430,6 @@ class GC
 
         //debug(PRINTF) printf("GC::malloc(size = %d, gcx = %p)\n", size, gcx);
         assert(gcx);
-        //debug(PRINTF) printf("gcx.self = %x, pthread_self() = %x\n", gcx.self, pthread_self());
 
         size += SENTINEL_EXTRA;
 
@@ -1396,20 +1377,6 @@ const uint notbinsize[B_MAX] = [ ~(16u-1),~(32u-1),~(64u-1),~(128u-1),~(256u-1),
 
 struct Gcx
 {
-    debug (THREADINVARIANT)
-    {
-        pthread_t self;
-        void thread_Invariant()
-        {
-            if (self != pthread_self())
-                printf("thread_Invariant(): gcx = %x, self = %x, pthread_self() = %x\n", this, self, pthread_self());
-            assert(self == pthread_self());
-        }
-    }
-    else
-    {
-        void thread_Invariant() { }
-    }
 
     void *p_cache;
     size_t size_cache;
@@ -1444,8 +1411,6 @@ struct Gcx
         (cast(byte*)this)[0 .. Gcx.sizeof] = 0;
         stackBottom = cast(char*)&dummy;
         log_init();
-        debug (THREADINVARIANT)
-            self = pthread_self();
         //printf("gcx = %p, self = %x\n", this, self);
         inited = 1;
     }
@@ -1481,9 +1446,6 @@ struct Gcx
         {
         //printf("Gcx.invariant(): this = %p\n", this);
             size_t i;
-
-            // Assure we're called on the right thread
-            debug (THREADINVARIANT) assert(self == pthread_self());
 
             for (i = 0; i < npools; i++)
             {   Pool *pool = pooltable[i];
@@ -1580,8 +1542,8 @@ struct Gcx
      */
     void addRange(void *pbot, void *ptop)
     {
-        debug(PRINTF) printf("Thread %x ", pthread_self());
-        debug(PRINTF) printf("%x.Gcx::addRange(%x, %x), nranges = %d\n", this, pbot, ptop, nranges);
+        debug (PRINTF) printf("%x.Gcx::addRange(%x, %x), nranges = %d\n", this,
+                pbot, ptop, nranges);
         if (nranges == rangedim)
         {
             size_t newdim = rangedim * 2 + 16;
@@ -1608,8 +1570,8 @@ struct Gcx
      */
     void removeRange(void *pbot)
     {
-        debug(PRINTF) printf("Thread %x ", pthread_self());
-        debug(PRINTF) printf("%x.Gcx.removeRange(%x), nranges = %d\n", this, pbot, nranges);
+        debug (PRINTF) printf("%x.Gcx.removeRange(%x), nranges = %d\n", this,
+                pbot, nranges);
         for (size_t i = nranges; i--;)
         {
             if (ranges[i].pbot == pbot)
