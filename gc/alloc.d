@@ -128,7 +128,7 @@ static if (is(typeof(VirtualAlloc)))
         return cast(int)(VirtualFree(base, 0, MEM_RELEASE) == 0);
     }
 }
-else static if (is(typeof(mmap)))
+else static if (is(typeof(mmap)) && is(typeof(MAP_ANON)))
 {
     void *os_mem_map(size_t nbytes)
     {   void *p;
