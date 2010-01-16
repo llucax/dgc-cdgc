@@ -155,32 +155,6 @@ else static if (is(typeof(mmap)) && is(typeof(MAP_ANON)))
         return munmap(base, nbytes);
     }
 }
-else static if (is(typeof(valloc)))
-{
-    void *os_mem_map(size_t nbytes)
-    {
-        return valloc(nbytes);
-    }
-
-
-    int os_mem_commit(void *base, size_t offset, size_t nbytes)
-    {
-        return 0;
-    }
-
-
-    int os_mem_decommit(void *base, size_t offset, size_t nbytes)
-    {
-        return 0;
-    }
-
-
-    int os_mem_unmap(void *base, size_t nbytes)
-    {
-        free(base);
-        return 0;
-    }
-}
 else static if (is(typeof(malloc)))
 {
     // NOTE: This assumes malloc granularity is at least (void*).sizeof.  If
