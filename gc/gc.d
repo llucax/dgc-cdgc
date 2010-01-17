@@ -2791,14 +2791,14 @@ struct Pool
             if (ncommitted)
             {
                 result = os_mem_decommit(baseAddr, 0, ncommitted * PAGESIZE);
-                assert(result == 0);
+                assert(result);
                 ncommitted = 0;
             }
 
             if (npages)
             {
                 result = os_mem_unmap(baseAddr, npages * PAGESIZE);
-                assert(result == 0);
+                assert(result);
                 npages = 0;
             }
 
@@ -2885,7 +2885,7 @@ struct Pool
                 tocommit = npages - ncommitted;
             //debug(PRINTF) printf("\tlooking to commit %d more pages\n", tocommit);
             //fflush(stdout);
-            if (os_mem_commit(baseAddr, ncommitted * PAGESIZE, tocommit * PAGESIZE) == 0)
+            if (os_mem_commit(baseAddr, ncommitted * PAGESIZE, tocommit * PAGESIZE))
             {
                 .memset(pagetable + ncommitted, B_FREE, tocommit);
                 auto i = ncommitted;

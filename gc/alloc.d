@@ -97,7 +97,7 @@ version (D_Ddoc)
      *      true  success
      *      false failure
      */
-    int os_mem_commit(void* base, size_t offset, size_t nbytes);
+    bool os_mem_commit(void* base, size_t offset, size_t nbytes);
 
     /**
      * Decommit memory.
@@ -105,7 +105,7 @@ version (D_Ddoc)
      *      true  success
      *      false failure
      */
-    int os_mem_decommit(void* base, size_t offset, size_t nbytes);
+    bool os_mem_decommit(void* base, size_t offset, size_t nbytes);
 
     /**
      * Unmap memory allocated with os_mem_map().
@@ -114,7 +114,7 @@ version (D_Ddoc)
      *      true  success
      *      false failure
      */
-    int os_mem_unmap(void* base, size_t nbytes);
+    bool os_mem_unmap(void* base, size_t nbytes);
 }
 // Implementations
 else static if (is(typeof(VirtualAlloc)))
@@ -124,20 +124,20 @@ else static if (is(typeof(VirtualAlloc)))
         return VirtualAlloc(null, nbytes, MEM_RESERVE, PAGE_READWRITE);
     }
 
-    int os_mem_commit(void* base, size_t offset, size_t nbytes)
+    bool os_mem_commit(void* base, size_t offset, size_t nbytes)
     {
         void* p = VirtualAlloc(base + offset, nbytes, MEM_COMMIT, PAGE_READWRITE);
-        return cast(int)(p is null);
+        return p !is null;
     }
 
-    int os_mem_decommit(void* base, size_t offset, size_t nbytes)
+    bool os_mem_decommit(void* base, size_t offset, size_t nbytes)
     {
-        return cast(int)(VirtualFree(base + offset, nbytes, MEM_DECOMMIT) == 0);
+        return VirtualFree(base + offset, nbytes, MEM_DECOMMIT) != 0;
     }
 
-    int os_mem_unmap(void* base, size_t nbytes)
+    bool os_mem_unmap(void* base, size_t nbytes)
     {
-        return cast(int)(VirtualFree(base, 0, MEM_RELEASE) == 0);
+        return VirtualFree(base, 0, MEM_RELEASE) != 0;
     }
 }
 else static if (is(typeof(mmap)) && is(typeof(MAP_ANON)))
@@ -149,19 +149,19 @@ else static if (is(typeof(mmap)) && is(typeof(MAP_ANON)))
         return (p == MAP_FAILED) ? null : p;
     }
 
-    int os_mem_commit(void* base, size_t offset, size_t nbytes)
+    bool os_mem_commit(void* base, size_t offset, size_t nbytes)
     {
-        return 0;
+        return true;
     }
 
-    int os_mem_decommit(void* base, size_t offset, size_t nbytes)
+    bool os_mem_decommit(void* base, size_t offset, size_t nbytes)
     {
-        return 0;
+        return true;
     }
 
-    int os_mem_unmap(void* base, size_t nbytes)
+    bool os_mem_unmap(void* base, size_t nbytes)
     {
-        return munmap(base, nbytes);
+        return munmap(base, nbytes) == 0;
     }
 }
 else static if (is(typeof(malloc)))
@@ -184,20 +184,20 @@ else static if (is(typeof(malloc)))
         return q;
     }
 
-    int os_mem_commit(void* base, size_t offset, size_t nbytes)
+    bool os_mem_commit(void* base, size_t offset, size_t nbytes)
     {
-        return 0;
+        return true;
     }
 
-    int os_mem_decommit(void* base, size_t offset, size_t nbytes)
+    bool os_mem_decommit(void* base, size_t offset, size_t nbytes)
     {
-        return 0;
+        return true;
     }
 
-    int os_mem_unmap(void* base, size_t nbytes)
+    bool os_mem_unmap(void* base, size_t nbytes)
     {
         free(*cast(void**)(cast(byte*) base + nbytes));
-        return 0;
+        return true;
     }
 }
 else
