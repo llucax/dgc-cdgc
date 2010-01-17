@@ -92,24 +92,7 @@ version (D_Ddoc)
     void* os_mem_map(size_t nbytes);
 
     /**
-     * Commit memory.
-     * Returns:
-     *      true  success
-     *      false failure
-     */
-    bool os_mem_commit(void* base, size_t offset, size_t nbytes);
-
-    /**
-     * Decommit memory.
-     * Returns:
-     *      true  success
-     *      false failure
-     */
-    bool os_mem_decommit(void* base, size_t offset, size_t nbytes);
-
-    /**
      * Unmap memory allocated with os_mem_map().
-     * Memory must have already been decommitted.
      * Returns:
      *      true  success
      *      false failure
@@ -121,18 +104,8 @@ else static if (is(typeof(VirtualAlloc)))
 {
     void* os_mem_map(size_t nbytes)
     {
-        return VirtualAlloc(null, nbytes, MEM_RESERVE, PAGE_READWRITE);
-    }
-
-    bool os_mem_commit(void* base, size_t offset, size_t nbytes)
-    {
-        void* p = VirtualAlloc(base + offset, nbytes, MEM_COMMIT, PAGE_READWRITE);
-        return p !is null;
-    }
-
-    bool os_mem_decommit(void* base, size_t offset, size_t nbytes)
-    {
-        return VirtualFree(base + offset, nbytes, MEM_DECOMMIT) != 0;
+        return VirtualAlloc(null, nbytes, MEM_RESERVE | MEM_COMMIT,
+                PAGE_READWRITE);
     }
 
     bool os_mem_unmap(void* base, size_t nbytes)
@@ -147,16 +120,6 @@ else static if (is(typeof(mmap)) && is(typeof(MAP_ANON)))
         void* p = mmap(null, nbytes,
                 PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
         return (p == MAP_FAILED) ? null : p;
-    }
-
-    bool os_mem_commit(void* base, size_t offset, size_t nbytes)
-    {
-        return true;
-    }
-
-    bool os_mem_decommit(void* base, size_t offset, size_t nbytes)
-    {
-        return true;
     }
 
     bool os_mem_unmap(void* base, size_t nbytes)
@@ -182,16 +145,6 @@ else static if (is(typeof(malloc)))
         q = p + ((PAGESIZE - ((cast(size_t) p & PAGE_MASK))) & PAGE_MASK);
         *cast(void**)(q + nbytes) = p;
         return q;
-    }
-
-    bool os_mem_commit(void* base, size_t offset, size_t nbytes)
-    {
-        return true;
-    }
-
-    bool os_mem_decommit(void* base, size_t offset, size_t nbytes)
-    {
-        return true;
     }
 
     bool os_mem_unmap(void* base, size_t nbytes)

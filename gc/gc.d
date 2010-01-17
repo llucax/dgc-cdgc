@@ -645,13 +645,9 @@ class GC
                                     .memset(&pool.pagetable[pagenum + psz], B_PAGEPLUS, newsz - psz);
                                     return p;
                                 }
-                                if (i == pool.ncommitted)
+                                if (i == pool.npages)
                                 {
-                                    auto u = pool.extendPages(pagenum + newsz - pool.ncommitted);
-                                    if (u == OPFAIL)
-                                        break;
-                                    i = pagenum + newsz;
-                                    continue;
+                                    break;
                                 }
                                 if (pool.pagetable[i] != B_FREE)
                                     break;
@@ -747,7 +743,7 @@ class GC
         for (sz = 0; sz < maxsz; sz++)
         {
             auto i = pagenum + psz + sz;
-            if (i == pool.ncommitted)
+            if (i == pool.npages)
                 break;
             if (pool.pagetable[i] != B_FREE)
             {   if (sz < minsz)
@@ -755,17 +751,7 @@ class GC
                 break;
             }
         }
-        if (sz >= minsz)
-        {
-        }
-        else if (pagenum + psz + sz == pool.ncommitted)
-        {
-            auto u = pool.extendPages(minsz - sz);
-            if (u == OPFAIL)
-                return 0;
-            sz = minsz;
-        }
-        else
+        if (sz < minsz)
             return 0;
         debug (MEMSTOMP) .memset(p + psize, 0xF0, (psz + sz) * PAGESIZE - psize);
         .memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
@@ -859,7 +845,7 @@ class GC
             // Free pages
             npages = 1;
             n = pagenum;
-            while (++n < pool.ncommitted && pool.pagetable[n] == B_PAGEPLUS)
+            while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
                 npages++;
             debug (MEMSTOMP) .memset(p, 0xF2, npages * PAGESIZE);
             pool.freePages(pagenum, npages);
@@ -1290,8 +1276,8 @@ class GC
         for (n = 0; n < gcx.npools; n++)
         {   Pool *pool = gcx.pooltable[n];
 
-            psize += pool.ncommitted * PAGESIZE;
-            for (size_t j = 0; j < pool.ncommitted; j++)
+            psize += pool.npages * PAGESIZE;
+            for (size_t j = 0; j < pool.npages; j++)
             {
                 Bins bin = cast(Bins)pool.pagetable[j];
                 if (bin == B_FREE)
@@ -1326,7 +1312,6 @@ class GC
 
 enum
 {   PAGESIZE =    4096,
-    COMMITSIZE = (4096*16),
     POOLSIZE =   (4096*256),
 }
 
@@ -1344,7 +1329,6 @@ enum
     B_PAGE,             // start of large alloc
     B_PAGEPLUS,         // continuation of large alloc
     B_FREE,             // free page
-    B_UNCOMMITTED,      // memory not committed for this page
     B_MAX
 }
 
@@ -1646,7 +1630,7 @@ struct Gcx
             }
             else
             {
-                // we are in a B_FREE or B_UNCOMMITTED page
+                // we are in a B_FREE page
                 return null;
             }
         }
@@ -1673,12 +1657,12 @@ struct Gcx
             bin = cast(Bins)pool.pagetable[pagenum];
             size = binsize[bin];
             if (bin == B_PAGE)
-            {   size_t npages = pool.ncommitted;
+            {
                 ubyte* pt;
                 size_t i;
 
                 pt = &pool.pagetable[0];
-                for (i = pagenum + 1; i < npages; i++)
+                for (i = pagenum + 1; i < pool.npages; i++)
                 {
                     if (pt[i] != B_PAGEPLUS)
                         break;
@@ -1731,12 +1715,12 @@ struct Gcx
 
             info.size = binsize[bin];
             if (bin == B_PAGE)
-            {   size_t npages = pool.ncommitted;
+            {
                 ubyte* pt;
                 size_t i;
 
                 pt = &pool.pagetable[0];
-                for (i = pn + 1; i < npages; i++)
+                for (i = pn + 1; i < pool.npages; i++)
                 {
                     if (pt[i] != B_PAGEPLUS)
                         break;
@@ -1811,9 +1795,9 @@ struct Gcx
         size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
         Pool*  pool = newPool(npages);
 
-        if (!pool || pool.extendPages(npages) == OPFAIL)
+        if (!pool)
             return 0;
-        return pool.ncommitted * PAGESIZE;
+        return pool.npages * PAGESIZE;
     }
 
 
@@ -1825,18 +1809,16 @@ struct Gcx
         size_t n;
         size_t pn;
         Pool*  pool;
-        size_t ncommitted;
 
         for (n = 0; n < npools; n++)
         {
             pool = pooltable[n];
-            ncommitted = pool.ncommitted;
-            for (pn = 0; pn < ncommitted; pn++)
+            for (pn = 0; pn < pool.npages; pn++)
             {
                 if (cast(Bins)pool.pagetable[pn] != B_FREE)
                     break;
             }
-            if (pn < ncommitted)
+            if (pn < pool.npages)
             {
                 n++;
                 continue;
@@ -1951,9 +1933,6 @@ struct Gcx
         size_t i;
 
         //debug(PRINTF) printf("************Gcx::newPool(npages = %d)****************\n", npages);
-
-        // Round up to COMMITSIZE pages
-        npages = (npages + (COMMITSIZE/PAGESIZE) - 1) & ~(COMMITSIZE/PAGESIZE - 1);
 
         // Minimum of POOLSIZE
         if (npages < POOLSIZE/PAGESIZE)
@@ -2101,7 +2080,7 @@ struct Gcx
                     }
                     else
                     {
-                        // Don't mark bits in B_FREE or B_UNCOMMITTED pages
+                        // Don't mark bits in B_FREE pages
                         continue;
                     }
 
@@ -2345,7 +2324,7 @@ struct Gcx
                                     pn--;
                             }
                             u = 1;
-                            while (pn + u < pool.ncommitted && pool.pagetable[pn + u] == B_PAGEPLUS)
+                            while (pn + u < pool.npages && pool.pagetable[pn + u] == B_PAGEPLUS)
                                 u++;
                             mark(o, o + u * PAGESIZE);
                         }
@@ -2362,13 +2341,11 @@ struct Gcx
         size_t freed = 0;
         for (n = 0; n < npools; n++)
         {   size_t pn;
-            size_t ncommitted;
             uint*  bbase;
 
             pool = pooltable[n];
             bbase = pool.mark.base();
-            ncommitted = pool.ncommitted;
-            for (pn = 0; pn < ncommitted; pn++, bbase += PAGESIZE / (32 * 16))
+            for (pn = 0; pn < pool.npages; pn++, bbase += PAGESIZE / (32 * 16))
             {
                 Bins bin = cast(Bins)pool.pagetable[pn];
 
@@ -2445,7 +2422,7 @@ struct Gcx
                         pool.pagetable[pn] = B_FREE;
                         freedpages++;
                         debug (MEMSTOMP) .memset(p, 0xF3, PAGESIZE);
-                        while (pn + 1 < ncommitted && pool.pagetable[pn + 1] == B_PAGEPLUS)
+                        while (pn + 1 < pool.npages && pool.pagetable[pn + 1] == B_PAGEPLUS)
                         {
                             pn++;
                             pool.pagetable[pn] = B_FREE;
@@ -2469,11 +2446,9 @@ struct Gcx
         size_t recoveredpages = 0;
         for (n = 0; n < npools; n++)
         {   size_t pn;
-            size_t ncommitted;
 
             pool = pooltable[n];
-            ncommitted = pool.ncommitted;
-            for (pn = 0; pn < ncommitted; pn++)
+            for (pn = 0; pn < pool.npages; pn++)
             {
                 Bins   bin = cast(Bins)pool.pagetable[pn];
                 size_t biti;
@@ -2740,7 +2715,6 @@ struct Pool
     GCBits noscan;      // entries that should not be scanned
 
     size_t npages;
-    size_t ncommitted;    // ncommitted <= npages
     ubyte* pagetable;
 
 
@@ -2775,10 +2749,9 @@ struct Pool
         pagetable = cast(ubyte*) .malloc(npages);
         if (!pagetable)
             onOutOfMemoryError();
-        .memset(pagetable, B_UNCOMMITTED, npages);
+	.memset(pagetable, B_FREE, npages);
 
         this.npages = npages;
-        ncommitted = 0;
     }
 
 
@@ -2787,13 +2760,6 @@ struct Pool
         if (baseAddr)
         {
             int result;
-
-            if (ncommitted)
-            {
-                result = os_mem_decommit(baseAddr, 0, ncommitted * PAGESIZE);
-                assert(result);
-                ncommitted = 0;
-            }
 
             if (npages)
             {
@@ -2832,7 +2798,6 @@ struct Pool
             //if (baseAddr + npages * PAGESIZE != topAddr)
                 //printf("baseAddr = %p, npages = %d, topAddr = %p\n", baseAddr, npages, topAddr);
             assert(baseAddr + npages * PAGESIZE == topAddr);
-            assert(ncommitted <= npages);
         }
 
         for (size_t i = 0; i < npages; i++)
@@ -2854,7 +2819,7 @@ struct Pool
 
         //debug(PRINTF) printf("Pool::allocPages(n = %d)\n", n);
         n2 = n;
-        for (i = 0; i < ncommitted; i++)
+        for (i = 0; i < npages; i++)
         {
             if (pagetable[i] == B_FREE)
             {
@@ -2866,39 +2831,6 @@ struct Pool
             else
                 n2 = n;
         }
-        return extendPages(n);
-    }
-
-    /**
-     * Extend Pool by n pages.
-     * Returns OPFAIL on failure.
-     */
-    size_t extendPages(size_t n)
-    {
-        //debug(PRINTF) printf("Pool::extendPages(n = %d)\n", n);
-        if (ncommitted + n <= npages)
-        {
-            size_t tocommit;
-
-            tocommit = (n + (COMMITSIZE/PAGESIZE) - 1) & ~(COMMITSIZE/PAGESIZE - 1);
-            if (ncommitted + tocommit > npages)
-                tocommit = npages - ncommitted;
-            //debug(PRINTF) printf("\tlooking to commit %d more pages\n", tocommit);
-            //fflush(stdout);
-            if (os_mem_commit(baseAddr, ncommitted * PAGESIZE, tocommit * PAGESIZE))
-            {
-                .memset(pagetable + ncommitted, B_FREE, tocommit);
-                auto i = ncommitted;
-                ncommitted += tocommit;
-
-                while (i && pagetable[i - 1] == B_FREE)
-                    i--;
-
-                return i;
-            }
-            //debug(PRINTF) printf("\tfailed to commit %d pages\n", tocommit);
-        }
-
         return OPFAIL;
     }
 
