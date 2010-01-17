@@ -26,7 +26,9 @@
 
 module gc.alloc;
 
+
 // C OS-specific API
+
 private extern (C) {
     version (Win32) {
         alias void* POINTER;
@@ -79,23 +81,50 @@ private extern (C) {
     }
 }
 
-static if (is(typeof(VirtualAlloc)))
+
+// Public interface
+
+version (D_Ddoc)
 {
     /**
      * Map memory.
      */
+    void* os_mem_map(size_t nbytes);
+
+    /**
+     * Commit memory.
+     * Returns:
+     *      true  success
+     *      false failure
+     */
+    int os_mem_commit(void* base, size_t offset, size_t nbytes);
+
+    /**
+     * Decommit memory.
+     * Returns:
+     *      true  success
+     *      false failure
+     */
+    int os_mem_decommit(void* base, size_t offset, size_t nbytes);
+
+    /**
+     * Unmap memory allocated with os_mem_map().
+     * Memory must have already been decommitted.
+     * Returns:
+     *      true  success
+     *      false failure
+     */
+    int os_mem_unmap(void* base, size_t nbytes);
+}
+// Implementations
+else static if (is(typeof(VirtualAlloc)))
+{
     void *os_mem_map(size_t nbytes)
     {
         return VirtualAlloc(null, nbytes, MEM_RESERVE, PAGE_READWRITE);
     }
 
 
-    /**
-     * Commit memory.
-     * Returns:
-     *      0       success
-     *      !=0     failure
-     */
     int os_mem_commit(void *base, size_t offset, size_t nbytes)
     {   void *p;
 
@@ -104,25 +133,12 @@ static if (is(typeof(VirtualAlloc)))
     }
 
 
-    /**
-     * Decommit memory.
-     * Returns:
-     *      0       success
-     *      !=0     failure
-     */
     int os_mem_decommit(void *base, size_t offset, size_t nbytes)
     {
     return cast(int)(VirtualFree(base + offset, nbytes, MEM_DECOMMIT) == 0);
     }
 
 
-    /**
-     * Unmap memory allocated with os_mem_map().
-     * Memory must have already been decommitted.
-     * Returns:
-     *      0       success
-     *      !=0     failure
-     */
     int os_mem_unmap(void *base, size_t nbytes)
     {
         return cast(int)(VirtualFree(base, 0, MEM_RELEASE) == 0);
