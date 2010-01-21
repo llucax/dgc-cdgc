@@ -43,7 +43,6 @@ module gc.gc;
 version = STACKGROWSDOWN;       // growing the stack means subtracting from the stack pointer
                                 // (use for Intel X86 CPUs)
                                 // else growing the stack means adding to the stack pointer
-version = MULTI_THREADED;       // produce multithreaded version
 
 /***************************************************/
 
@@ -89,14 +88,11 @@ private
 
     extern (C) void rt_scanStaticData( scanFn scan );
 
-    version (MULTI_THREADED)
-    {
-        extern (C) bool thread_needLock();
-        extern (C) void thread_suspendAll();
-        extern (C) void thread_resumeAll();
+    extern (C) bool thread_needLock();
+    extern (C) void thread_suspendAll();
+    extern (C) void thread_resumeAll();
 
-        extern (C) void thread_scanAll( scanFn fn, void* curStackTop = null );
-    }
+    extern (C) void thread_scanAll( scanFn fn, void* curStackTop = null );
 
     extern (C) void onOutOfMemoryError();
 
@@ -2236,25 +2232,10 @@ struct Gcx
 
         rt_scanStaticData( &mark );
 
-        version (MULTI_THREADED)
+        if (!noStack)
         {
-            if (!noStack)
-            {
-                // Scan stacks and registers for each paused thread
-                thread_scanAll( &mark, stackTop );
-            }
-        }
-        else
-        {
-            if (!noStack)
-            {
-                // Scan stack for main thread
-                debug(PRINTF) printf(" scan stack bot = %x, top = %x\n", stackTop, stackBottom);
-                version (STACKGROWSDOWN)
-                    mark(stackTop, stackBottom);
-                else
-                    mark(stackBottom, stackTop);
-            }
+            // Scan stacks and registers for each paused thread
+            thread_scanAll( &mark, stackTop );
         }
 
         // Scan roots[]
