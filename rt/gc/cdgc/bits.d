@@ -34,6 +34,7 @@ private extern (C) void onOutOfMemoryError();
 version (DigitalMars)
 {
     version = bitops;
+    import std.intrinsic;
 }
 else version (GNU)
 {
