@@ -24,11 +24,11 @@
  * Authors:   Walter Bright, Sean Kelly
  */
 
-module gc.iface;
+module rt.gc.cdgc.iface;
 
-import gc.gc;
-import gc.stats;
-import gc.c;
+import rt.gc.cdgc.gc;
+import rt.gc.cdgc.stats;
+import rt.gc.cdgc.libc;
 
 version=GCCLASS;
 

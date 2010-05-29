@@ -24,7 +24,7 @@
  * Authors:   Walter Bright, David Friedman, Sean Kelly
  */
 
-module gc.alloc;
+module rt.gc.cdgc.alloc;
 
 
 // C OS-specific API
@@ -134,7 +134,7 @@ else static if (is(typeof(malloc)))
     //       to PAGESIZE alignment, there will be space for a void* at the end
     //       after PAGESIZE bytes used by the GC.
 
-    import gcx; // for PAGESIZE
+    import rt.gc.cdgc.gc: PAGESIZE;
 
     const size_t PAGE_MASK = PAGESIZE - 1;
 

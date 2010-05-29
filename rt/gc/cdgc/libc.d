@@ -1,5 +1,5 @@
 
-module gc.c;
+module rt.gc.cdgc.libc;
 
 version (Windows) {
     alias int   c_long;

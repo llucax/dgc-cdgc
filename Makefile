@@ -31,13 +31,14 @@ LD_OUTPUT_OPTION = -o $@
 #LDFLAGS :=
 
 # GC sources
-sources := \
-	gc/iface.d \
-	gc/alloc.d \
-	gc/bits.d \
-	gc/stats.d \
-	gc/libc.d \
-	gc/gc.d
+sources := $(addprefix rt/gc/cdgc/,\
+	iface.d \
+	alloc.d \
+	bits.d \
+	stats.d \
+	libc.d \
+	gc.d \
+	)
 
 # Default target
 all: $B/cdgc.so

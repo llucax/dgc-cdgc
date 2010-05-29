@@ -24,7 +24,7 @@
  * Authors:   Walter Bright, David Friedman, Sean Kelly
  */
 
-module gc.gc;
+module rt.gc.cdgc.gc;
 
 // D Programming Language Garbage Collector implementation
 
@@ -46,10 +46,10 @@ version = STACKGROWSDOWN;       // growing the stack means subtracting from the 
 
 /***************************************************/
 
-import gc.bits;
-import gc.stats;
-import gc.alloc;
-import gc.libc;
+import rt.gc.cdgc.bits;
+import rt.gc.cdgc.stats;
+import rt.gc.cdgc.alloc;
+import rt.gc.cdgc.libc;
 
 
 version (GNU)

@@ -24,9 +24,9 @@
  * Authors:   Walter Bright, David Friedman, Sean Kelly
  */
 
-module gc.bits;
+module rt.gc.cdgc.bits;
 
-import gc.libc;
+import rt.gc.cdgc.libc;
 
 private extern (C) void onOutOfMemoryError();
 
