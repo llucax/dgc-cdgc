@@ -2220,12 +2220,12 @@ struct Gcx
                     mov ebp[EBP], EBP      ;
                     mov esi[EBP], ESI      ;
                     mov edi[EBP], EDI      ;
-                    mov sp[EBP],ESP     ;
+                    mov  sp[EBP], ESP      ;
                 }
             }
             else version (X86_64)
             {
-                ulong rax,rbx,rcx,rdx,rbp,rsi,rdi,rsp,r8,r9,r10,r11,r12,r13,r14,r15;
+                ulong rax,rbx,rcx,rdx,rbp,rsi,rdi,r8,r9,r10,r11,r12,r13,r14,r15;
                 asm
                 {
                     movq rax[RBP], RAX      ;
@@ -2235,15 +2235,15 @@ struct Gcx
                     movq rbp[RBP], RBP      ;
                     movq rsi[RBP], RSI      ;
                     movq rdi[RBP], RDI      ;
-                    movq rsp[RBP], RSP      ;
-                    movq  r8[RBP], R8       ;
-                    movq  r9[RBP], R9       ;
+                    movq r8 [RBP], R8       ;
+                    movq r9 [RBP], R9       ;
                     movq r10[RBP], R10      ;
                     movq r11[RBP], R11      ;
                     movq r12[RBP], R12      ;
                     movq r13[RBP], R13      ;
                     movq r14[RBP], R14      ;
                     movq r15[RBP], R15      ;
+                    movq  sp[RBP], RSP      ;
                 }
             }
             else
