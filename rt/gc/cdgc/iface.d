@@ -26,9 +26,9 @@
 
 module rt.gc.cdgc.iface;
 
-import rt.gc.cdgc.gc;
-import rt.gc.cdgc.stats;
-import rt.gc.cdgc.libc;
+import rt.gc.cdgc.gc: GC, BlkInfo;
+import rt.gc.cdgc.stats: GCStats;
+import libc = rt.gc.cdgc.libc;
 
 version=GCCLASS;
 
@@ -67,13 +67,13 @@ extern (C) void gc_init()
     {   void* p;
         ClassInfo ci = GC.classinfo;
 
-        p = malloc(ci.init.length);
+        p = libc.malloc(ci.init.length);
         (cast(byte*)p)[0 .. ci.init.length] = ci.init[];
         _gc = cast(GC)p;
     }
     else
     {
-        _gc = cast(GC*) calloc(1, GC.sizeof);
+        _gc = cast(GC*) libc.calloc(1, GC.sizeof);
     }
     _gc.initialize();
     version (DigitalMars) version(OSX) {

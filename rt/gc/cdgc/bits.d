@@ -26,7 +26,7 @@
 
 module rt.gc.cdgc.bits;
 
-import rt.gc.cdgc.libc;
+import libc = rt.gc.cdgc.libc;
 
 private extern (C) void onOutOfMemoryError();
 
@@ -63,7 +63,7 @@ struct GCBits
     {
         if (data)
         {
-            free(data);
+            libc.free(data);
             data = null;
         }
     }
@@ -80,7 +80,7 @@ struct GCBits
     {
         this.nbits = nbits;
         nwords = (nbits + (BITS_PER_WORD - 1)) >> BITS_SHIFT;
-        data = cast(uint*)calloc(nwords + 2, uint.sizeof);
+        data = cast(uint*)libc.calloc(nwords + 2, uint.sizeof);
         if (!data)
             onOutOfMemoryError();
     }
@@ -157,7 +157,7 @@ struct GCBits
             for (;d1!=dEnd;++d1)
                 *d1=0u;
         } else {
-            memset(data + 1, 0, nwords * uint.sizeof);
+            libc.memset(data + 1, 0, nwords * uint.sizeof);
         }
     }
 
@@ -173,7 +173,7 @@ struct GCBits
             for (;d1!=dEnd;++d1,++d2)
                 *d1=*d2;
         } else {
-            memcpy(data + 1, f.data + 1, nwords * uint.sizeof);
+            libc.memcpy(data + 1, f.data + 1, nwords * uint.sizeof);
         }
     }
 
