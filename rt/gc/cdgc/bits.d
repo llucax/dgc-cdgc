@@ -137,14 +137,13 @@ struct GCBits
             }
         }
         else
-        {   uint result;
-
+        {
             //result = (cast(bit *)(data + 1))[i];
             //(cast(bit *)(data + 1))[i] = 0;
 
             uint* p = &data[1 + (i >> BITS_SHIFT)];
             uint  mask = (1 << (i & BITS_MASK));
-            result = *p & mask;
+            uint result = *p & mask;
             *p &= ~mask;
             return result;
         }
