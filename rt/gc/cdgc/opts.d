@@ -47,6 +47,8 @@ struct Options
 {
     uint verbose = 0;
     char[MAX_OPT_LEN] log_file = "";
+    char[MAX_OPT_LEN] malloc_stats_file = "";
+    char[MAX_OPT_LEN] collect_stats_file = "";
     bool sentinel = false;
     bool mem_stomp = false;
 }
@@ -63,6 +65,14 @@ void process_option(char* opt_name, char* opt_value)
     else if (cstring.strcmp(opt_name, "log_file") == 0)
     {
         cstring.strcpy(options.log_file.ptr, opt_value);
+    }
+    else if (cstring.strcmp(opt_name, "malloc_stats_file") == 0)
+    {
+        cstring.strcpy(options.malloc_stats_file.ptr, opt_value);
+    }
+    else if (cstring.strcmp(opt_name, "collect_stats_file") == 0)
+    {
+        cstring.strcpy(options.collect_stats_file.ptr, opt_value);
     }
     else if (cstring.strcmp(opt_name, "sentinel") == 0)
     {

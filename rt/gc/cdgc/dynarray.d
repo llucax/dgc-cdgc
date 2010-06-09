@@ -80,6 +80,14 @@ public:
     }
 
     /**
+     * Get the total ammount of bytes the array consumes.
+     */
+    size_t size_of()
+    {
+        return this.sizeof + this._capacity * (T.sizeof + (T*).sizeof);
+    }
+
+    /**
      * Get the pointer to the array's data.
      *
      * Use with care, the data belongs to the array and you should not

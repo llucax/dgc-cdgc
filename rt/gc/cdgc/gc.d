@@ -43,7 +43,7 @@ version = STACKGROWSDOWN;       // growing the stack means subtracting from the 
 /***************************************************/
 
 import rt.gc.cdgc.bits: GCBits;
-import rt.gc.cdgc.stats: GCStats;
+import rt.gc.cdgc.stats: GCStats, Stats;
 import rt.gc.cdgc.dynarray: DynArray;
 import alloc = rt.gc.cdgc.alloc;
 import opts = rt.gc.cdgc.opts;
@@ -84,15 +84,16 @@ struct BlkInfo
     uint   attr;
 }
 
+package enum BlkAttr : uint
+{
+    FINALIZE = 0b0000_0001,
+    NO_SCAN  = 0b0000_0010,
+    NO_MOVE  = 0b0000_0100,
+    ALL_BITS = 0b1111_1111
+}
+
 private
 {
-    enum BlkAttr : uint
-    {
-        FINALIZE = 0b0000_0001,
-        NO_SCAN  = 0b0000_0010,
-        NO_MOVE  = 0b0000_0100,
-        ALL_BITS = 0b1111_1111
-    }
 
     extern (C) void* rt_stackBottom();
     extern (C) void* rt_stackTop();
@@ -135,6 +136,8 @@ class GCLock { }                // just a dummy so we can get a global lock
 const uint GCVERSION = 1;       // increment every time we change interface
                                 // to GC.
 
+Stats stats;
+
 class GC
 {
     // For passing to debug code
@@ -156,6 +159,7 @@ class GC
             onOutOfMemoryError();
         gcx.initialize();
         setStackBottom(rt_stackBottom());
+        stats = Stats(this);
     }
 
 
@@ -327,6 +331,10 @@ class GC
     private void *mallocNoSync(size_t size, uint bits = 0)
     {
         assert(size != 0);
+
+        stats.malloc_started(size, bits);
+        scope (exit)
+            stats.malloc_finished();
 
         void *p = null;
         Bins bin;
@@ -1943,12 +1951,15 @@ struct Gcx
         anychanges |= changes;
     }
 
-
     /**
      * Return number of full pages free'd.
      */
     size_t fullcollectshell()
     {
+        stats.collection_started();
+        scope (exit)
+            stats.collection_finished();
+
         // The purpose of the 'shell' is to ensure all the registers
         // get put on the stack so they'll be scanned
         void *sp;
@@ -2042,6 +2053,7 @@ struct Gcx
         debug(COLLECT_PRINTF) printf("Gcx.fullcollect()\n");
 
         thread_suspendAll();
+        stats.world_stopped();
 
         p_cache = null;
         size_cache = 0;
@@ -2159,6 +2171,7 @@ struct Gcx
         }
 
         thread_resumeAll();
+        stats.world_started();
 
         // Free up everything not marked
         debug(COLLECT_PRINTF) printf("\tfree'ing\n");
