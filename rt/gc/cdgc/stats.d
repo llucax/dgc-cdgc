@@ -37,3 +37,6 @@ struct GCStats
     size_t freelistsize;    // total of memory on free lists
     size_t pageblocks;      // number of blocks marked PAGE
 }
+
+
+// vim: set et sw=4 sts=4 :

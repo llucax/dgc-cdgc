@@ -157,3 +157,6 @@ else
 {
     static assert(false, "No supported allocation methods available.");
 }
+
+
+// vim: set et sw=4 sts=4 :

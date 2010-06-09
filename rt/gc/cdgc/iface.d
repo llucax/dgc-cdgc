@@ -233,3 +233,6 @@ extern (C) Object gc_weakpointerGet( void* wp )
 {
     return _gc.weakpointerGet(wp);
 }
+
+
+// vim: set et sw=4 sts=4 :
