@@ -26,7 +26,8 @@
 
 module rt.gc.cdgc.bits;
 
-import libc = rt.gc.cdgc.libc;
+import cstdlib = tango.stdc.stdlib;
+import cstring = tango.stdc.string;
 
 private extern (C) void onOutOfMemoryError();
 
@@ -63,7 +64,7 @@ struct GCBits
     {
         if (data)
         {
-            libc.free(data);
+            cstdlib.free(data);
             data = null;
         }
     }
@@ -80,7 +81,7 @@ struct GCBits
     {
         this.nbits = nbits;
         nwords = (nbits + (BITS_PER_WORD - 1)) >> BITS_SHIFT;
-        data = cast(uint*)libc.calloc(nwords + 2, uint.sizeof);
+        data = cast(uint*)cstdlib.calloc(nwords + 2, uint.sizeof);
         if (!data)
             onOutOfMemoryError();
     }
@@ -156,7 +157,7 @@ struct GCBits
             for (;d1!=dEnd;++d1)
                 *d1=0u;
         } else {
-            libc.memset(data + 1, 0, nwords * uint.sizeof);
+            cstring.memset(data + 1, 0, nwords * uint.sizeof);
         }
     }
 
@@ -172,7 +173,7 @@ struct GCBits
             for (;d1!=dEnd;++d1,++d2)
                 *d1=*d2;
         } else {
-            libc.memcpy(data + 1, f.data + 1, nwords * uint.sizeof);
+            cstring.memcpy(data + 1, f.data + 1, nwords * uint.sizeof);
         }
     }
 

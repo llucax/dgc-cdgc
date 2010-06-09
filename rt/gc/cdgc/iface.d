@@ -28,7 +28,8 @@ module rt.gc.cdgc.iface;
 
 import rt.gc.cdgc.gc: GC, BlkInfo;
 import rt.gc.cdgc.stats: GCStats;
-import libc = rt.gc.cdgc.libc;
+
+import cstdlib = tango.stdc.stdlib;
 
 version=GCCLASS;
 
@@ -66,13 +67,13 @@ extern (C) void gc_init()
     version (GCCLASS)
     {
         ClassInfo ci = GC.classinfo;
-        void* p = libc.malloc(ci.init.length);
+        void* p = cstdlib.malloc(ci.init.length);
         (cast(byte*)p)[0 .. ci.init.length] = ci.init[];
         _gc = cast(GC)p;
     }
     else
     {
-        _gc = cast(GC*) libc.calloc(1, GC.sizeof);
+        _gc = cast(GC*) cstdlib.calloc(1, GC.sizeof);
     }
     _gc.initialize();
     version (DigitalMars) version(OSX) {
