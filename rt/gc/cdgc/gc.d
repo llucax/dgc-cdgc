@@ -31,7 +31,6 @@ module rt.gc.cdgc.gc;
 /************** Debugging ***************************/
 
 //debug = COLLECT_PRINTF;       // turn on printf's
-//debug = LOGGING;              // log allocations / frees
 //debug = MEMSTOMP;             // stomp on memory
 //debug = SENTINEL;             // add underrun/overrrun protection
 //debug = PTRCHECK;             // more pointer checking
@@ -110,106 +109,6 @@ private
 
 
 alias GC gc_t;
-
-
-/* ======================= Leak Detector =========================== */
-
-
-debug (LOGGING)
-{
-    struct Log
-    {
-        void*  p;
-        size_t size;
-        size_t line;
-        char*  file;
-        void*  parent;
-
-        void print()
-        {
-            printf("    p = %x, size = %d, parent = %x ", p, size, parent);
-            if (file)
-            {
-                printf("%s(%u)", file, line);
-            }
-            printf("\n");
-        }
-    }
-
-
-    struct LogArray
-    {
-        size_t dim;
-        size_t allocdim;
-        Log *data;
-
-        void Dtor()
-        {
-            if (data)
-                cstdlib.free(data);
-            data = null;
-        }
-
-        void reserve(size_t nentries)
-        {
-            assert(dim <= allocdim);
-            if (allocdim - dim < nentries)
-            {
-                allocdim = (dim + nentries) * 2;
-                assert(dim + nentries <= allocdim);
-                if (!data)
-                {
-                    data = cast(Log*) cstdlib.malloc(allocdim * Log.sizeof);
-                    if (!data && allocdim)
-                        onOutOfMemoryError();
-                }
-                else
-                {
-                    Log *newdata = cast(Log*) cstdlib.malloc(
-                            allocdim * Log.sizeof);
-                    if (!newdata && allocdim)
-                        onOutOfMemoryError();
-                    cstring.memcpy(newdata, data, dim * Log.sizeof);
-                    cstdlib.free(data);
-                    data = newdata;
-                }
-            }
-        }
-
-
-        void push(Log log)
-        {
-            reserve(1);
-            data[dim++] = log;
-        }
-
-        void remove(size_t i)
-        {
-            cstring.memmove(data + i, data + i + 1, (dim - i) * Log.sizeof);
-            dim--;
-        }
-
-
-        size_t find(void *p)
-        {
-            for (size_t i = 0; i < dim; i++)
-            {
-                if (data[i].p == p)
-                    return i;
-            }
-            return OPFAIL; // not found
-        }
-
-
-        void copy(LogArray *from)
-        {
-            reserve(from.dim - dim);
-            assert(from.dim <= allocdim);
-            cstring.memcpy(data, from.data, from.dim * Log.sizeof);
-            dim = from.dim;
-        }
-    }
-}
 
 
 /* ============================ GC =============================== */
@@ -492,7 +391,6 @@ class GC
         size -= SENTINEL_EXTRA;
         p = sentinel_add(p);
         sentinel_init(p, size);
-        gcx.log_malloc(p, size);
 
         if (bits)
         {
@@ -862,7 +760,6 @@ class GC
             list.next = gcx.bucket[bin];
             gcx.bucket[bin] = list;
         }
-        gcx.log_free(sentinel_add(p));
     }
 
 
@@ -1196,7 +1093,6 @@ class GC
             getStats(stats);
         }
 
-        gcx.log_collect();
     }
 
 
@@ -1467,7 +1363,6 @@ struct Gcx
         int dummy;
         (cast(byte*)this)[0 .. Gcx.sizeof] = 0;
         stackBottom = cast(char*)&dummy;
-        log_init();
         //printf("gcx = %p, self = %x\n", this, self);
         inited = 1;
     }
@@ -2172,7 +2067,6 @@ struct Gcx
                             pool.scan.set(biti);
                             changes = 1;
                         }
-                        log_parent(sentinel_add(pool.baseAddr + biti * 16), sentinel_add(pbot));
                     }
                 }
             }
@@ -2431,7 +2325,6 @@ struct Gcx
                             gcx.clrBits(pool, biti, BlkAttr.ALL_BITS);
 
                             List *list = cast(List *)p;
-                            log_free(sentinel_add(list));
 
                             debug (MEMSTOMP) cstring.memset(p, 0xF3, size);
                         }
@@ -2452,7 +2345,6 @@ struct Gcx
                             clrBits(pool, biti, BlkAttr.ALL_BITS);
 
                             List *list = cast(List *)p;
-                            log_free(sentinel_add(list));
 
                             debug (MEMSTOMP) cstring.memset(p, 0xF3, size);
 
@@ -2472,7 +2364,6 @@ struct Gcx
                         clrBits(pool, biti, BlkAttr.ALL_BITS);
 
                         debug(COLLECT_PRINTF) printf("\tcollecting big %x\n", p);
-                        log_free(sentinel_add(p));
                         pool.pagetable[pn] = B_FREE;
                         freedpages++;
                         debug (MEMSTOMP) cstring.memset(p, 0xF3, PAGESIZE);
@@ -2621,111 +2512,6 @@ struct Gcx
 //            pool.nomove.clear(biti);
     }
 
-
-    /***** Leak Detector ******/
-
-
-    debug (LOGGING)
-    {
-        LogArray current;
-        LogArray prev;
-
-
-        void log_init()
-        {
-            current.reserve(1000);
-            prev.reserve(1000);
-        }
-
-
-        void log_malloc(void *p, size_t size)
-        {
-            Log log;
-
-            log.p = p;
-            log.size = size;
-            log.line = GC.line;
-            log.file = GC.file;
-            log.parent = null;
-
-            GC.line = 0;
-            GC.file = null;
-
-            current.push(log);
-        }
-
-
-        void log_free(void *p)
-        {
-            size_t i;
-
-            i = current.find(p);
-            if (i != OPFAIL)
-                current.remove(i);
-        }
-
-
-        void log_collect()
-        {
-            // Print everything in current that is not in prev
-            size_t used = 0;
-            for (size_t i = 0; i < current.dim; i++)
-            {
-                size_t j;
-
-                j = prev.find(current.data[i].p);
-                if (j == OPFAIL)
-                    current.data[i].print();
-                else
-                    used++;
-            }
-
-            for (size_t i = 0; i < current.dim; i++)
-            {
-                void *p;
-                size_t j;
-
-                p = current.data[i].p;
-                if (!findPool(current.data[i].parent))
-                {
-                    j = prev.find(current.data[i].p);
-                    current.data[i].print();
-                }
-            }
-
-            prev.copy(&current);
-        }
-
-
-        void log_parent(void *p, void *parent)
-        {
-            size_t i;
-
-            i = current.find(p);
-            if (i == OPFAIL)
-            {
-                Pool *pool;
-                pool = findPool(p);
-                assert(pool);
-                size_t offset = cast(size_t)(p - pool.baseAddr);
-                size_t biti;
-                size_t pn = offset / PAGESIZE;
-                Bins bin = cast(Bins)pool.pagetable[pn];
-                biti = (offset & notbinsize[bin]);
-            }
-            else
-                current.data[i].parent = parent;
-        }
-
-    }
-    else
-    {
-        void log_init() { }
-        void log_malloc(void *p, size_t size) { }
-        void log_free(void *p) { }
-        void log_collect() { }
-        void log_parent(void *p, void *parent) { }
-    }
 }
 
 
