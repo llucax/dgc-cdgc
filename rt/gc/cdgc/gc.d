@@ -1378,12 +1378,15 @@ struct Gcx
             pool.Dtor();
             cstdlib.free(pool);
         }
+
+        // Even when free() can be called with a null pointer, the extra call
+        // might be significant. On hard GC benchmarks making the test for null
+        // here (i.e. not making the call) can reduce the GC time by almost
+        // ~5%.
         if (pooltable)
             cstdlib.free(pooltable);
-
         if (roots)
             cstdlib.free(roots);
-
         if (ranges)
             cstdlib.free(ranges);
     }
@@ -2579,6 +2582,7 @@ struct Pool
             baseAddr = null;
             topAddr = null;
         }
+        // See Gcx.Dtor() for the rationale of the null check.
         if (pagetable)
             cstdlib.free(pagetable);
 

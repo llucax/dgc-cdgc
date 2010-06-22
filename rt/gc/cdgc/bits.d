@@ -62,6 +62,10 @@ struct GCBits
 
     void Dtor()
     {
+        // Even when free() can be called with a null pointer, the extra call
+        // might be significant. On hard GC benchmarks making the test for null
+        // here (i.e. not making the call) can reduce the GC time by almost
+        // ~5%.
         if (data)
         {
             cstdlib.free(data);
