@@ -190,7 +190,7 @@ public:
         if (new_capacity == 0)
             new_capacity = this._size * 2;
             if (new_capacity == 0)
-                new_capacity = 4;
+                new_capacity = 16;
         // reallocate the memory with the new_capacity
         T* new_data = cast(T*) realloc(this._data, new_capacity * T.sizeof);
         if (new_data is null)
