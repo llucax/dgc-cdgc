@@ -47,6 +47,7 @@ version = STACKGROWSDOWN;       // growing the stack means subtracting from the 
 import rt.gc.cdgc.bits: GCBits;
 import rt.gc.cdgc.stats: GCStats;
 import alloc = rt.gc.cdgc.alloc;
+import rt.gc.cdgc.dynarray: DynArray;
 
 import cstdlib = tango.stdc.stdlib;
 import cstring = tango.stdc.string;
@@ -989,11 +990,13 @@ class GC
 
         if (!thread_needLock())
         {
-            gcx.addRoot(p);
+            if (roots.append(p) is null)
+                onOutOfMemoryError();
         }
         else synchronized (gcLock)
         {
-            gcx.addRoot(p);
+            if (roots.append(p) is null)
+                onOutOfMemoryError();
         }
     }
 
@@ -1008,14 +1011,16 @@ class GC
             return;
         }
 
+        bool r;
         if (!thread_needLock())
         {
-            gcx.removeRoot(p);
+            r = roots.remove(p);
         }
         else synchronized (gcLock)
         {
-            gcx.removeRoot(p);
+            r = roots.remove(p);
         }
+        assert (r);
     }
 
 
@@ -1031,11 +1036,13 @@ class GC
 
         if (!thread_needLock())
         {
-            gcx.addRange(p, p + sz);
+            if (ranges.append(Range(p, p+sz)) is null)
+                onOutOfMemoryError();
         }
         else synchronized (gcLock)
         {
-            gcx.addRange(p, p + sz);
+            if (ranges.append(Range(p, p+sz)) is null)
+                onOutOfMemoryError();
         }
     }
 
@@ -1050,14 +1057,16 @@ class GC
             return;
         }
 
+        bool r;
         if (!thread_needLock())
         {
-            gcx.removeRange(p);
+            r = ranges.remove(Range(p, null));
         }
         else synchronized (gcLock)
         {
-            gcx.removeRange(p);
+            r = ranges.remove(Range(p, null));
         }
+        assert (r);
     }
 
 
@@ -1307,12 +1316,22 @@ struct Range
 {
     void *pbot;
     void *ptop;
+    int opCmp(in Range other)
+    {
+        if (pbot < other.pbot)
+            return -1;
+        else
+        return cast(int)(pbot > other.pbot);
+    }
 }
 
 
 const uint binsize[B_MAX] = [ 16,32,64,128,256,512,1024,2048,4096 ];
 const uint notbinsize[B_MAX] = [ ~(16u-1),~(32u-1),~(64u-1),~(128u-1),~(256u-1),
                                 ~(512u-1),~(1024u-1),~(2048u-1),~(4096u-1) ];
+
+DynArray!(void*) roots;
+DynArray!(Range) ranges;
 
 /* ============================ Gcx =============================== */
 
@@ -1322,14 +1341,6 @@ struct Gcx
 
     void *p_cache;
     size_t size_cache;
-
-    size_t nroots;
-    size_t rootdim;
-    void **roots;
-
-    size_t nranges;
-    size_t rangedim;
-    Range *ranges;
 
     uint noStack;       // !=0 means don't scan stack
     uint log;           // turn on logging
@@ -1385,23 +1396,14 @@ struct Gcx
                 }
             }
 
-            if (roots)
-            {
-                assert(rootdim != 0);
-                assert(nroots <= rootdim);
-            }
+            roots.Invariant();
+            ranges.Invariant();
 
-            if (ranges)
+            for (i = 0; i < ranges.length; i++)
             {
-                assert(rangedim != 0);
-                assert(nranges <= rangedim);
-
-                for (i = 0; i < nranges; i++)
-                {
-                    assert(ranges[i].pbot);
-                    assert(ranges[i].ptop);
-                    assert(ranges[i].pbot <= ranges[i].ptop);
-                }
+                assert(ranges[i].pbot);
+                assert(ranges[i].ptop);
+                assert(ranges[i].pbot <= ranges[i].ptop);
             }
 
             for (i = 0; i < B_PAGE; i++)
@@ -1411,101 +1413,6 @@ struct Gcx
                 }
             }
         }
-    }
-
-
-    /**
-     *
-     */
-    void addRoot(void *p)
-    {
-        if (nroots == rootdim)
-        {
-            size_t newdim = rootdim * 2 + 16;
-            void** newroots;
-
-            newroots = cast(void**) cstdlib.malloc(newdim * newroots[0].sizeof);
-            if (!newroots)
-                onOutOfMemoryError();
-            if (roots)
-            {
-                cstring.memcpy(newroots, roots, nroots * newroots[0].sizeof);
-                cstdlib.free(roots);
-            }
-            roots = newroots;
-            rootdim = newdim;
-        }
-        roots[nroots] = p;
-        nroots++;
-    }
-
-
-    /**
-     *
-     */
-    void removeRoot(void *p)
-    {
-        for (size_t i = nroots; i--;)
-        {
-            if (roots[i] == p)
-            {
-                nroots--;
-                cstring.memmove(roots + i, roots + i + 1,
-                        (nroots - i) * roots[0].sizeof);
-                return;
-            }
-        }
-        assert(0);
-    }
-
-
-    /**
-     *
-     */
-    void addRange(void *pbot, void *ptop)
-    {
-        if (nranges == rangedim)
-        {
-            size_t newdim = rangedim * 2 + 16;
-            Range *newranges;
-
-            newranges = cast(Range*) cstdlib.malloc(newdim * Range.sizeof);
-            if (!newranges)
-                onOutOfMemoryError();
-            if (ranges)
-            {
-                cstring.memcpy(newranges, ranges, nranges * Range.sizeof);
-                cstdlib.free(ranges);
-            }
-            ranges = newranges;
-            rangedim = newdim;
-        }
-        ranges[nranges].pbot = pbot;
-        ranges[nranges].ptop = ptop;
-        nranges++;
-    }
-
-
-    /**
-     *
-     */
-    void removeRange(void *pbot)
-    {
-        for (size_t i = nranges; i--;)
-        {
-            if (ranges[i].pbot == pbot)
-            {
-                nranges--;
-                cstring.memmove(ranges + i, ranges + i + 1,
-                        (nranges - i) * ranges[0].sizeof);
-                return;
-            }
-        }
-
-        // This is a fatal error, but ignore it.
-        // The problem is that we can get a Close() call on a thread
-        // other than the one the range was allocated on.
-        //assert(zero);
     }
 
 
@@ -2179,14 +2086,14 @@ struct Gcx
             thread_scanAll( &mark, stackTop );
         }
 
-        // Scan roots[]
+        // Scan roots
         debug(COLLECT_PRINTF) printf("scan roots[]\n");
-        mark(roots, roots + nroots);
+        mark(roots.ptr, roots.ptr + roots.length);
 
-        // Scan ranges[]
+        // Scan ranges
         debug(COLLECT_PRINTF) printf("scan ranges[]\n");
         //log++;
-        for (n = 0; n < nranges; n++)
+        for (n = 0; n < ranges.length; n++)
         {
             debug(COLLECT_PRINTF) printf("\t%x .. %x\n", ranges[n].pbot, ranges[n].ptop);
             mark(ranges[n].pbot, ranges[n].ptop);
