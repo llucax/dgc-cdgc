@@ -52,6 +52,22 @@ import rt.gc.cdgc.dynarray: DynArray;
 import cstdlib = tango.stdc.stdlib;
 import cstring = tango.stdc.string;
 
+/*
+ * This is a small optimization that proved it's usefulness. For small chunks
+ * or memory memset() seems to be slower (probably because of the call) that
+ * simply doing a simple loop to set the memory.
+ */
+void memset(void* dst, int c, size_t n)
+{
+    // This number (32) has been determined empirically
+    if (n > 32) {
+        cstring.memset(dst, c, n);
+        return;
+    }
+    auto p = cast(ubyte*)(dst);
+    while (n-- > 0)
+        *p++ = c;
+}
 
 version (GNU)
 {
@@ -369,8 +385,8 @@ class GC
             // Return next item from free list
             gcx.bucket[bin] = (cast(List*)p).next;
             if( !(bits & BlkAttr.NO_SCAN) )
-                cstring.memset(p + size, 0, binsize[bin] - size);
-            debug (MEMSTOMP) cstring.memset(p, 0xF0, size);
+                memset(p + size, 0, binsize[bin] - size);
+            debug (MEMSTOMP) memset(p, 0xF0, size);
         }
         else
         {
@@ -422,7 +438,7 @@ class GC
         assert(size != 0);
 
         void *p = mallocNoSync(size, bits);
-        cstring.memset(p, 0, size);
+        memset(p, 0, size);
         return p;
     }
 
@@ -516,7 +532,7 @@ class GC
                         synchronized (gcLock)
                         {
                             debug (MEMSTOMP)
-                                cstring.memset(p + size, 0xF2, psize - size);
+                                memset(p + size, 0xF2, psize - size);
                             pool.freePages(pagenum + newsz, psz - newsz);
                         }
                         return p;
@@ -531,9 +547,9 @@ class GC
                                 if (i == pagenum + newsz)
                                 {
                                     debug (MEMSTOMP)
-                                        cstring.memset(p + psize, 0xF0,
+                                        memset(p + psize, 0xF0,
                                                 size - psize);
-                                    cstring.memset(pool.pagetable + pagenum +
+                                    memset(pool.pagetable + pagenum +
                                             psz, B_PAGEPLUS, newsz - psz);
                                     return p;
                                 }
@@ -645,8 +661,8 @@ class GC
         if (sz < minsz)
             return 0;
         debug (MEMSTOMP)
-            cstring.memset(p + psize, 0xF0, (psz + sz) * PAGESIZE - psize);
-        cstring.memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
+            memset(p + psize, 0xF0, (psz + sz) * PAGESIZE - psize);
+        memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
         gcx.p_cache = null;
         gcx.size_cache = 0;
         return (psz + sz) * PAGESIZE;
@@ -737,7 +753,7 @@ class GC
             size_t n = pagenum;
             while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
                 npages++;
-            debug (MEMSTOMP) cstring.memset(p, 0xF2, npages * PAGESIZE);
+            debug (MEMSTOMP) memset(p, 0xF2, npages * PAGESIZE);
             pool.freePages(pagenum, npages);
         }
         else
@@ -745,7 +761,7 @@ class GC
             // Add to free list
             List *list = cast(List*)p;
 
-            debug (MEMSTOMP) cstring.memset(p, 0xF2, binsize[bin]);
+            debug (MEMSTOMP) memset(p, 0xF2, binsize[bin]);
 
             list.next = gcx.bucket[bin];
             gcx.bucket[bin] = list;
@@ -1159,7 +1175,7 @@ class GC
         size_t n;
         size_t bsize = 0;
 
-        cstring.memset(&stats, 0, GCStats.sizeof);
+        memset(&stats, 0, GCStats.sizeof);
 
         for (n = 0; n < pools.length; n++)
         {
@@ -1755,10 +1771,10 @@ struct Gcx
       L1:
         pool.pagetable[pn] = B_PAGE;
         if (npages > 1)
-            cstring.memset(&pool.pagetable[pn + 1], B_PAGEPLUS, npages - 1);
+            memset(&pool.pagetable[pn + 1], B_PAGEPLUS, npages - 1);
         p = pool.baseAddr + pn * PAGESIZE;
-        cstring.memset(cast(char *)p + size, 0, npages * PAGESIZE - size);
-        debug (MEMSTOMP) cstring.memset(p, 0xF1, size);
+        memset(cast(char *)p + size, 0, npages * PAGESIZE - size);
+        debug (MEMSTOMP) memset(p, 0xF1, size);
         return p;
 
       Lnomemory:
@@ -2170,7 +2186,7 @@ struct Gcx
 
                             List *list = cast(List *)p;
 
-                            debug (MEMSTOMP) cstring.memset(p, 0xF3, size);
+                            debug (MEMSTOMP) memset(p, 0xF3, size);
                         }
                         pool.pagetable[pn] = B_FREE;
                         freed += PAGESIZE;
@@ -2190,7 +2206,7 @@ struct Gcx
 
                             List *list = cast(List *)p;
 
-                            debug (MEMSTOMP) cstring.memset(p, 0xF3, size);
+                            debug (MEMSTOMP) memset(p, 0xF3, size);
 
                             freed += size;
                         }
@@ -2210,7 +2226,7 @@ struct Gcx
                         debug(COLLECT_PRINTF) printf("\tcollecting big %x\n", p);
                         pool.pagetable[pn] = B_FREE;
                         freedpages++;
-                        debug (MEMSTOMP) cstring.memset(p, 0xF3, PAGESIZE);
+                        debug (MEMSTOMP) memset(p, 0xF3, PAGESIZE);
                         while (pn + 1 < pool.npages && pool.pagetable[pn + 1] == B_PAGEPLUS)
                         {
                             pn++;
@@ -2220,7 +2236,7 @@ struct Gcx
                             debug (MEMSTOMP)
                             {
                                 p += PAGESIZE;
-                                cstring.memset(p, 0xF3, PAGESIZE);
+                                memset(p, 0xF3, PAGESIZE);
                             }
                         }
                     }
@@ -2401,7 +2417,7 @@ struct Pool
         pagetable = cast(ubyte*) cstdlib.malloc(npages);
         if (!pagetable)
             onOutOfMemoryError();
-        cstring.memset(pagetable, B_FREE, npages);
+        memset(pagetable, B_FREE, npages);
 
         this.npages = npages;
     }
@@ -2490,7 +2506,7 @@ struct Pool
      */
     void freePages(size_t pagenum, size_t npages)
     {
-        cstring.memset(&pagetable[pagenum], B_FREE, npages);
+        memset(&pagetable[pagenum], B_FREE, npages);
     }
 
 
