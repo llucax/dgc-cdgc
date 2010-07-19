@@ -31,8 +31,6 @@ module rt.gc.cdgc.gc;
 /************** Debugging ***************************/
 
 //debug = COLLECT_PRINTF;       // turn on printf's
-//debug = MEMSTOMP;             // stomp on memory
-//debug = SENTINEL;             // add underrun/overrrun protection
 //debug = PTRCHECK;             // more pointer checking
 //debug = PTRCHECK2;            // thorough but slow pointer checking
 
@@ -46,8 +44,9 @@ version = STACKGROWSDOWN;       // growing the stack means subtracting from the 
 
 import rt.gc.cdgc.bits: GCBits;
 import rt.gc.cdgc.stats: GCStats;
-import alloc = rt.gc.cdgc.alloc;
 import rt.gc.cdgc.dynarray: DynArray;
+import alloc = rt.gc.cdgc.alloc;
+import opts = rt.gc.cdgc.opts;
 
 import cstdlib = tango.stdc.stdlib;
 import cstring = tango.stdc.string;
@@ -77,7 +76,6 @@ version (GNU)
     //      be found.
     static import gcc.builtins; // for __builtin_unwind_int
 }
-
 
 struct BlkInfo
 {
@@ -151,6 +149,7 @@ class GC
 
     void initialize()
     {
+        opts.parse(cstdlib.getenv("D_GC_OPTS"));
         gcLock = GCLock.classinfo;
         gcx = cast(Gcx*) cstdlib.calloc(1, Gcx.sizeof);
         if (!gcx)
@@ -334,7 +333,8 @@ class GC
 
         assert(gcx);
 
-        size += SENTINEL_EXTRA;
+        if (opts.options.sentinel)
+            size += SENTINEL_EXTRA;
 
         // Compute size bin
         // Cache previous binsize lookup - Dave Fladebo.
@@ -386,7 +386,8 @@ class GC
             gcx.bucket[bin] = (cast(List*)p).next;
             if( !(bits & BlkAttr.NO_SCAN) )
                 memset(p + size, 0, binsize[bin] - size);
-            debug (MEMSTOMP) memset(p, 0xF0, size);
+            if (opts.options.mem_stomp)
+                memset(p, 0xF0, size);
         }
         else
         {
@@ -394,9 +395,11 @@ class GC
             if (!p)
                 onOutOfMemoryError();
         }
-        size -= SENTINEL_EXTRA;
-        p = sentinel_add(p);
-        sentinel_init(p, size);
+        if (opts.options.sentinel) {
+            size -= SENTINEL_EXTRA;
+            p = sentinel_add(p);
+            sentinel_init(p, size);
+        }
 
         if (bits)
         {
@@ -481,7 +484,7 @@ class GC
             void *p2;
             size_t psize;
 
-            version (SENTINEL)
+            if (opts.options.sentinel)
             {
                 sentinel_Invariant(p);
                 psize = *sentinel_size(p);
@@ -531,7 +534,7 @@ class GC
                         // Shrink in place
                         synchronized (gcLock)
                         {
-                            debug (MEMSTOMP)
+                            if (opts.options.mem_stomp)
                                 memset(p + size, 0xF2, psize - size);
                             pool.freePages(pagenum + newsz, psz - newsz);
                         }
@@ -546,9 +549,8 @@ class GC
                             {
                                 if (i == pagenum + newsz)
                                 {
-                                    debug (MEMSTOMP)
-                                        memset(p + psize, 0xF0,
-                                                size - psize);
+                                    if (opts.options.mem_stomp)
+                                        memset(p + psize, 0xF0, size - psize);
                                     memset(pool.pagetable + pagenum +
                                             psz, B_PAGEPLUS, newsz - psz);
                                     return p;
@@ -630,7 +632,7 @@ class GC
     }
     body
     {
-        version (SENTINEL)
+        if (opts.options.sentinel)
         {
             return 0;
         }
@@ -660,7 +662,7 @@ class GC
         }
         if (sz < minsz)
             return 0;
-        debug (MEMSTOMP)
+        if (opts.options.mem_stomp)
             memset(p + psize, 0xF0, (psz + sz) * PAGESIZE - psize);
         memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
         gcx.p_cache = null;
@@ -739,8 +741,10 @@ class GC
         pool = gcx.findPool(p);
         if (!pool)                              // if not one of ours
             return;                             // ignore
-        sentinel_Invariant(p);
-        p = sentinel_sub(p);
+        if (opts.options.sentinel) {
+            sentinel_Invariant(p);
+            p = sentinel_sub(p);
+        }
         pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
         biti = cast(size_t)(p - pool.baseAddr) / 16;
         gcx.clrBits(pool, biti, BlkAttr.ALL_BITS);
@@ -753,7 +757,8 @@ class GC
             size_t n = pagenum;
             while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
                 npages++;
-            debug (MEMSTOMP) memset(p, 0xF2, npages * PAGESIZE);
+            if (opts.options.mem_stomp)
+                memset(p, 0xF2, npages * PAGESIZE);
             pool.freePages(pagenum, npages);
         }
         else
@@ -761,7 +766,8 @@ class GC
             // Add to free list
             List *list = cast(List*)p;
 
-            debug (MEMSTOMP) memset(p, 0xF2, binsize[bin]);
+            if (opts.options.mem_stomp)
+                memset(p, 0xF2, binsize[bin]);
 
             list.next = gcx.bucket[bin];
             gcx.bucket[bin] = list;
@@ -834,7 +840,7 @@ class GC
     {
         assert (p);
 
-        version (SENTINEL)
+        if (opts.options.sentinel)
         {
             p = sentinel_sub(p);
             size_t size = gcx.findSize(p);
@@ -936,7 +942,8 @@ class GC
     {
         assert(p);
 
-        sentinel_Invariant(p);
+        if (opts.options.sentinel)
+            sentinel_Invariant(p);
         debug (PTRCHECK)
         {
             Pool*  pool;
@@ -944,7 +951,8 @@ class GC
             Bins   bin;
             size_t size;
 
-            p = sentinel_sub(p);
+            if (opts.options.sentinel)
+                p = sentinel_sub(p);
             pool = gcx.findPool(p);
             assert(pool);
             pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
@@ -1774,7 +1782,8 @@ struct Gcx
             memset(&pool.pagetable[pn + 1], B_PAGEPLUS, npages - 1);
         p = pool.baseAddr + pn * PAGESIZE;
         memset(cast(char *)p + size, 0, npages * PAGESIZE - size);
-        debug (MEMSTOMP) memset(p, 0xF1, size);
+        if (opts.options.mem_stomp)
+            memset(p, 0xF1, size);
         return p;
 
       Lnomemory:
@@ -2180,13 +2189,18 @@ struct Gcx
                     {
                         for (; p < ptop; p += size, biti += bitstride)
                         {
-                            if (pool.finals.nbits && pool.finals.testClear(biti))
-                                rt_finalize(cast(List *)sentinel_add(p), false/*noStack > 0*/);
+                            if (pool.finals.nbits && pool.finals.testClear(biti)) {
+                                if (opts.options.sentinel)
+                                    rt_finalize(cast(List *)sentinel_add(p), false/*noStack > 0*/);
+                                else
+                                    rt_finalize(cast(List *)p, false/*noStack > 0*/);
+                            }
                             gcx.clrBits(pool, biti, BlkAttr.ALL_BITS);
 
                             List *list = cast(List *)p;
 
-                            debug (MEMSTOMP) memset(p, 0xF3, size);
+                            if (opts.options.mem_stomp)
+                                memset(p, 0xF3, size);
                         }
                         pool.pagetable[pn] = B_FREE;
                         freed += PAGESIZE;
@@ -2197,16 +2211,22 @@ struct Gcx
                     {
                         if (!pool.mark.test(biti))
                         {
-                            sentinel_Invariant(sentinel_add(p));
+                            if (opts.options.sentinel)
+                                sentinel_Invariant(sentinel_add(p));
 
                             pool.freebits.set(biti);
-                            if (pool.finals.nbits && pool.finals.testClear(biti))
-                                rt_finalize(cast(List *)sentinel_add(p), false/*noStack > 0*/);
+                            if (pool.finals.nbits && pool.finals.testClear(biti)) {
+                                if (opts.options.sentinel)
+                                    rt_finalize(cast(List *)sentinel_add(p), false/*noStack > 0*/);
+                                else
+                                    rt_finalize(cast(List *)p, false/*noStack > 0*/);
+                            }
                             clrBits(pool, biti, BlkAttr.ALL_BITS);
 
                             List *list = cast(List *)p;
 
-                            debug (MEMSTOMP) memset(p, 0xF3, size);
+                            if (opts.options.mem_stomp)
+                                memset(p, 0xF3, size);
 
                             freed += size;
                         }
@@ -2218,22 +2238,28 @@ struct Gcx
                     if (!pool.mark.test(biti))
                     {
                         byte *p = pool.baseAddr + pn * PAGESIZE;
-                        sentinel_Invariant(sentinel_add(p));
-                        if (pool.finals.nbits && pool.finals.testClear(biti))
-                            rt_finalize(sentinel_add(p), false/*noStack > 0*/);
+                        if (opts.options.sentinel)
+                            sentinel_Invariant(sentinel_add(p));
+                        if (pool.finals.nbits && pool.finals.testClear(biti)) {
+                            if (opts.options.sentinel)
+                                rt_finalize(sentinel_add(p), false/*noStack > 0*/);
+                            else
+                                rt_finalize(p, false/*noStack > 0*/);
+                        }
                         clrBits(pool, biti, BlkAttr.ALL_BITS);
 
                         debug(COLLECT_PRINTF) printf("\tcollecting big %x\n", p);
                         pool.pagetable[pn] = B_FREE;
                         freedpages++;
-                        debug (MEMSTOMP) memset(p, 0xF3, PAGESIZE);
+                        if (opts.options.mem_stomp)
+                            memset(p, 0xF3, PAGESIZE);
                         while (pn + 1 < pool.npages && pool.pagetable[pn + 1] == B_PAGEPLUS)
                         {
                             pn++;
                             pool.pagetable[pn] = B_FREE;
                             freedpages++;
 
-                            debug (MEMSTOMP)
+                            if (opts.options.mem_stomp)
                             {
                                 p += PAGESIZE;
                                 memset(p, 0xF3, PAGESIZE);
@@ -2526,69 +2552,40 @@ struct Pool
 /* ============================ SENTINEL =============================== */
 
 
-version (SENTINEL)
+const size_t SENTINEL_PRE = cast(size_t) 0xF4F4F4F4F4F4F4F4UL; // 32 or 64 bits
+const ubyte SENTINEL_POST = 0xF5;           // 8 bits
+const uint SENTINEL_EXTRA = 2 * size_t.sizeof + 1;
+
+
+size_t* sentinel_size(void *p)  { return &(cast(size_t *)p)[-2]; }
+size_t* sentinel_pre(void *p)   { return &(cast(size_t *)p)[-1]; }
+ubyte* sentinel_post(void *p) { return &(cast(ubyte *)p)[*sentinel_size(p)]; }
+
+
+void sentinel_init(void *p, size_t size)
 {
-    const size_t SENTINEL_PRE = cast(size_t) 0xF4F4F4F4F4F4F4F4UL; // 32 or 64 bits
-    const ubyte SENTINEL_POST = 0xF5;           // 8 bits
-    const uint SENTINEL_EXTRA = 2 * size_t.sizeof + 1;
-
-
-    size_t* sentinel_size(void *p)  { return &(cast(size_t *)p)[-2]; }
-    size_t* sentinel_pre(void *p)   { return &(cast(size_t *)p)[-1]; }
-    ubyte* sentinel_post(void *p) { return &(cast(ubyte *)p)[*sentinel_size(p)]; }
-
-
-    void sentinel_init(void *p, size_t size)
-    {
-        *sentinel_size(p) = size;
-        *sentinel_pre(p) = SENTINEL_PRE;
-        *sentinel_post(p) = SENTINEL_POST;
-    }
-
-
-    void sentinel_Invariant(void *p)
-    {
-        assert(*sentinel_pre(p) == SENTINEL_PRE);
-        assert(*sentinel_post(p) == SENTINEL_POST);
-    }
-
-
-    void *sentinel_add(void *p)
-    {
-        return p + 2 * size_t.sizeof;
-    }
-
-
-    void *sentinel_sub(void *p)
-    {
-        return p - 2 * size_t.sizeof;
-    }
+    *sentinel_size(p) = size;
+    *sentinel_pre(p) = SENTINEL_PRE;
+    *sentinel_post(p) = SENTINEL_POST;
 }
-else
+
+
+void sentinel_Invariant(void *p)
 {
-    const uint SENTINEL_EXTRA = 0;
+    assert(*sentinel_pre(p) == SENTINEL_PRE);
+    assert(*sentinel_post(p) == SENTINEL_POST);
+}
 
 
-    void sentinel_init(void *p, size_t size)
-    {
-    }
+void *sentinel_add(void *p)
+{
+    return p + 2 * size_t.sizeof;
+}
 
 
-    void sentinel_Invariant(void *p)
-    {
-    }
-
-
-    void *sentinel_add(void *p)
-    {
-        return p;
-    }
-
-
-    void *sentinel_sub(void *p)
-    {
-        return p;
-    }
+void *sentinel_sub(void *p)
+{
+    return p - 2 * size_t.sizeof;
 }
 
 
