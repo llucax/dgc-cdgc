@@ -210,15 +210,15 @@ class GC
         uint go()
         {
             Pool* pool = gcx.findPool(p);
-            uint  oldb = 0;
+            uint  old_attrs = 0;
 
             if (pool)
             {
-                auto biti = cast(size_t)(p - pool.baseAddr) / 16;
+                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
 
-                oldb = gcx.getBits(pool, biti);
+                old_attrs = gcx.getAttr(pool, bit_i);
             }
-            return oldb;
+            return old_attrs;
         }
 
         if (!thread_needLock())
@@ -245,16 +245,16 @@ class GC
         uint go()
         {
             Pool* pool = gcx.findPool(p);
-            uint  oldb = 0;
+            uint  old_attrs = 0;
 
             if (pool)
             {
-                auto biti = cast(size_t)(p - pool.baseAddr) / 16;
+                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
 
-                oldb = gcx.getBits(pool, biti);
-                gcx.setBits(pool, biti, mask);
+                old_attrs = gcx.getAttr(pool, bit_i);
+                gcx.setAttr(pool, bit_i, mask);
             }
-            return oldb;
+            return old_attrs;
         }
 
         if (!thread_needLock())
@@ -281,16 +281,16 @@ class GC
         uint go()
         {
             Pool* pool = gcx.findPool(p);
-            uint  oldb = 0;
+            uint  old_attrs = 0;
 
             if (pool)
             {
-                auto biti = cast(size_t)(p - pool.baseAddr) / 16;
+                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
 
-                oldb = gcx.getBits(pool, biti);
-                gcx.clrBits(pool, biti, mask);
+                old_attrs = gcx.getAttr(pool, bit_i);
+                gcx.clrAttr(pool, bit_i, mask);
             }
-            return oldb;
+            return old_attrs;
         }
 
         if (!thread_needLock())
@@ -307,7 +307,7 @@ class GC
     /**
      *
      */
-    void *malloc(size_t size, uint bits = 0)
+    void *malloc(size_t size, uint attrs = 0)
     {
         if (!size)
         {
@@ -316,11 +316,11 @@ class GC
 
         if (!thread_needLock())
         {
-            return mallocNoSync(size, bits);
+            return mallocNoSync(size, attrs);
         }
         else synchronized (gcLock)
         {
-            return mallocNoSync(size, bits);
+            return mallocNoSync(size, attrs);
         }
     }
 
@@ -328,11 +328,11 @@ class GC
     //
     //
     //
-    private void *mallocNoSync(size_t size, uint bits = 0)
+    private void *mallocNoSync(size_t size, uint attrs = 0)
     {
         assert(size != 0);
 
-        stats.malloc_started(size, bits);
+        stats.malloc_started(size, attrs);
         scope (exit)
             stats.malloc_finished();
 
@@ -392,7 +392,7 @@ class GC
 
             // Return next item from free list
             gcx.bucket[bin] = (cast(List*)p).next;
-            if( !(bits & BlkAttr.NO_SCAN) )
+            if( !(attrs & BlkAttr.NO_SCAN) )
                 memset(p + size, 0, binsize[bin] - size);
             if (opts.options.mem_stomp)
                 memset(p, 0xF0, size);
@@ -409,12 +409,12 @@ class GC
             sentinel_init(p, size);
         }
 
-        if (bits)
+        if (attrs)
         {
             Pool *pool = gcx.findPool(p);
             assert(pool);
 
-            gcx.setBits(pool, cast(size_t)(p - pool.baseAddr) / 16, bits);
+            gcx.setAttr(pool, cast(size_t)(p - pool.baseAddr) / 16, attrs);
         }
         return p;
     }
@@ -423,7 +423,7 @@ class GC
     /**
      *
      */
-    void *calloc(size_t size, uint bits = 0)
+    void *calloc(size_t size, uint attrs = 0)
     {
         if (!size)
         {
@@ -432,11 +432,11 @@ class GC
 
         if (!thread_needLock())
         {
-            return callocNoSync(size, bits);
+            return callocNoSync(size, attrs);
         }
         else synchronized (gcLock)
         {
-            return callocNoSync(size, bits);
+            return callocNoSync(size, attrs);
         }
     }
 
@@ -444,11 +444,11 @@ class GC
     //
     //
     //
-    private void *callocNoSync(size_t size, uint bits = 0)
+    private void *callocNoSync(size_t size, uint attrs = 0)
     {
         assert(size != 0);
 
-        void *p = mallocNoSync(size, bits);
+        void *p = mallocNoSync(size, attrs);
         memset(p, 0, size);
         return p;
     }
@@ -457,15 +457,15 @@ class GC
     /**
      *
      */
-    void *realloc(void *p, size_t size, uint bits = 0)
+    void *realloc(void *p, size_t size, uint attrs = 0)
     {
         if (!thread_needLock())
         {
-            return reallocNoSync(p, size, bits);
+            return reallocNoSync(p, size, attrs);
         }
         else synchronized (gcLock)
         {
-            return reallocNoSync(p, size, bits);
+            return reallocNoSync(p, size, attrs);
         }
     }
 
@@ -473,7 +473,7 @@ class GC
     //
     //
     //
-    private void *reallocNoSync(void *p, size_t size, uint bits = 0)
+    private void *reallocNoSync(void *p, size_t size, uint attrs = 0)
     {
         if (!size)
         {
@@ -485,7 +485,7 @@ class GC
         }
         else if (!p)
         {
-            p = mallocNoSync(size, bits);
+            p = mallocNoSync(size, attrs);
         }
         else
         {
@@ -504,20 +504,20 @@ class GC
 
                         if (pool)
                         {
-                            auto biti = cast(size_t)(p - pool.baseAddr) / 16;
+                            auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
 
-                            if (bits)
+                            if (attrs)
                             {
-                                gcx.clrBits(pool, biti, BlkAttr.ALL_BITS);
-                                gcx.setBits(pool, biti, bits);
+                                gcx.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
+                                gcx.setAttr(pool, bit_i, attrs);
                             }
                             else
                             {
-                                bits = gcx.getBits(pool, biti);
+                                attrs = gcx.getAttr(pool, bit_i);
                             }
                         }
                     }
-                    p2 = mallocNoSync(size, bits);
+                    p2 = mallocNoSync(size, attrs);
                     if (psize < size)
                         size = psize;
                     cstring.memcpy(p2, p, size);
@@ -583,20 +583,20 @@ class GC
 
                         if (pool)
                         {
-                            auto biti = cast(size_t)(p - pool.baseAddr) / 16;
+                            auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
 
-                            if (bits)
+                            if (attrs)
                             {
-                                gcx.clrBits(pool, biti, BlkAttr.ALL_BITS);
-                                gcx.setBits(pool, biti, bits);
+                                gcx.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
+                                gcx.setAttr(pool, bit_i, attrs);
                             }
                             else
                             {
-                                bits = gcx.getBits(pool, biti);
+                                attrs = gcx.getAttr(pool, bit_i);
                             }
                         }
                     }
-                    p2 = mallocNoSync(size, bits);
+                    p2 = mallocNoSync(size, attrs);
                     if (psize < size)
                         size = psize;
                     cstring.memcpy(p2, p, size);
@@ -743,7 +743,7 @@ class GC
         Pool*  pool;
         size_t pagenum;
         Bins   bin;
-        size_t biti;
+        size_t bit_i;
 
         // Find which page it is in
         pool = gcx.findPool(p);
@@ -754,8 +754,8 @@ class GC
             p = sentinel_sub(p);
         }
         pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
-        biti = cast(size_t)(p - pool.baseAddr) / 16;
-        gcx.clrBits(pool, biti, BlkAttr.ALL_BITS);
+        bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+        gcx.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
 
         bin = cast(Bins)pool.pagetable[pagenum];
         if (bin == B_PAGE)              // if large alloc
@@ -1610,10 +1610,10 @@ struct Gcx
             }
 
             ////////////////////////////////////////////////////////////////////
-            // getBits
+            // getAttr
             ////////////////////////////////////////////////////////////////////
 
-            info.attr = getBits(pool, cast(size_t)(offset / 16));
+            info.attr = getAttr(pool, cast(size_t)(offset / 16));
         }
         return info;
     }
@@ -1911,13 +1911,13 @@ struct Gcx
                 if (pool)
                 {
                     size_t offset = cast(size_t)(p - pool.baseAddr);
-                    size_t biti;
+                    size_t bit_i;
                     size_t pn = offset / PAGESIZE;
                     Bins   bin = cast(Bins)pool.pagetable[pn];
 
                     // Adjust bit to be at start of allocated memory block
                     if (bin <= B_PAGE)
-                        biti = (offset & notbinsize[bin]) >> 4;
+                        bit_i = (offset & notbinsize[bin]) >> 4;
                     else if (bin == B_PAGEPLUS)
                     {
                         do
@@ -1925,7 +1925,7 @@ struct Gcx
                             --pn;
                         }
                         while (cast(Bins)pool.pagetable[pn] == B_PAGEPLUS);
-                        biti = pn * (PAGESIZE / 16);
+                        bit_i = pn * (PAGESIZE / 16);
                     }
                     else
                     {
@@ -1936,12 +1936,12 @@ struct Gcx
                     if (bin >= B_PAGE) // Cache B_PAGE and B_PAGEPLUS lookups
                         pcache = cast(size_t)p & ~(PAGESIZE-1);
 
-                    if (!pool.mark.test(biti))
+                    if (!pool.mark.test(bit_i))
                     {
-                        pool.mark.set(biti);
-                        if (!pool.noscan.test(biti))
+                        pool.mark.set(bit_i);
+                        if (!pool.noscan.test(bit_i))
                         {
-                            pool.scan.set(biti);
+                            pool.scan.set(bit_i);
                             changes = 1;
                         }
                     }
@@ -2161,7 +2161,8 @@ struct Gcx
                                     pn--;
                             }
                             u = 1;
-                            while (pn + u < pool.npages && pool.pagetable[pn + u] == B_PAGEPLUS)
+                            while (pn + u < pool.npages &&
+                                    pool.pagetable[pn + u] == B_PAGEPLUS)
                                 u++;
                             mark(o, o + u * PAGESIZE);
                         }
@@ -2191,24 +2192,25 @@ struct Gcx
                     auto size = binsize[bin];
                     byte* p = pool.baseAddr + pn * PAGESIZE;
                     byte* ptop = p + PAGESIZE;
-                    size_t biti = pn * (PAGESIZE/16);
-                    size_t bitstride = size / 16;
+                    size_t bit_i = pn * (PAGESIZE/16);
+                    size_t bit_stride = size / 16;
 
     version(none) // BUG: doesn't work because freebits() must also be cleared
     {
                     // If free'd entire page
-                    if (bbase[0] == 0 && bbase[1] == 0 && bbase[2] == 0 && bbase[3] == 0 &&
-                        bbase[4] == 0 && bbase[5] == 0 && bbase[6] == 0 && bbase[7] == 0)
+                    if (bbase[0] == 0 && bbase[1] == 0 && bbase[2] == 0 &&
+                            bbase[3] == 0 && bbase[4] == 0 && bbase[5] == 0 &&
+                            bbase[6] == 0 && bbase[7] == 0)
                     {
-                        for (; p < ptop; p += size, biti += bitstride)
+                        for (; p < ptop; p += size, bit_i += bit_stride)
                         {
-                            if (pool.finals.nbits && pool.finals.testClear(biti)) {
+                            if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
                                 if (opts.options.sentinel)
                                     rt_finalize(cast(List *)sentinel_add(p), false/*noStack > 0*/);
                                 else
                                     rt_finalize(cast(List *)p, false/*noStack > 0*/);
                             }
-                            gcx.clrBits(pool, biti, BlkAttr.ALL_BITS);
+                            gcx.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
 
                             List *list = cast(List *)p;
 
@@ -2220,21 +2222,21 @@ struct Gcx
                         continue;
                     }
     }
-                    for (; p < ptop; p += size, biti += bitstride)
+                    for (; p < ptop; p += size, bit_i += bit_stride)
                     {
-                        if (!pool.mark.test(biti))
+                        if (!pool.mark.test(bit_i))
                         {
                             if (opts.options.sentinel)
                                 sentinel_Invariant(sentinel_add(p));
 
-                            pool.freebits.set(biti);
-                            if (pool.finals.nbits && pool.finals.testClear(biti)) {
+                            pool.freebits.set(bit_i);
+                            if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
                                 if (opts.options.sentinel)
                                     rt_finalize(cast(List *)sentinel_add(p), false/*noStack > 0*/);
                                 else
                                     rt_finalize(cast(List *)p, false/*noStack > 0*/);
                             }
-                            clrBits(pool, biti, BlkAttr.ALL_BITS);
+                            clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
 
                             List *list = cast(List *)p;
 
@@ -2247,19 +2249,19 @@ struct Gcx
                 }
                 else if (bin == B_PAGE)
                 {
-                    size_t biti = pn * (PAGESIZE / 16);
-                    if (!pool.mark.test(biti))
+                    size_t bit_i = pn * (PAGESIZE / 16);
+                    if (!pool.mark.test(bit_i))
                     {
                         byte *p = pool.baseAddr + pn * PAGESIZE;
                         if (opts.options.sentinel)
                             sentinel_Invariant(sentinel_add(p));
-                        if (pool.finals.nbits && pool.finals.testClear(biti)) {
+                        if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
                             if (opts.options.sentinel)
                                 rt_finalize(sentinel_add(p), false/*noStack > 0*/);
                             else
                                 rt_finalize(p, false/*noStack > 0*/);
                         }
-                        clrBits(pool, biti, BlkAttr.ALL_BITS);
+                        clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
 
                         debug(COLLECT_PRINTF) printf("\tcollecting big %x\n", p);
                         pool.pagetable[pn] = B_FREE;
@@ -2295,21 +2297,21 @@ struct Gcx
             for (size_t pn = 0; pn < pool.npages; pn++)
             {
                 Bins   bin = cast(Bins)pool.pagetable[pn];
-                size_t biti;
+                size_t bit_i;
                 size_t u;
 
                 if (bin < B_PAGE)
                 {
                     size_t size = binsize[bin];
-                    size_t bitstride = size / 16;
-                    size_t bitbase = pn * (PAGESIZE / 16);
-                    size_t bittop = bitbase + (PAGESIZE / 16);
+                    size_t bit_stride = size / 16;
+                    size_t bit_base = pn * (PAGESIZE / 16);
+                    size_t bit_top = bit_base + (PAGESIZE / 16);
                     byte*  p;
 
-                    biti = bitbase;
-                    for (biti = bitbase; biti < bittop; biti += bitstride)
+                    bit_i = bit_base;
+                    for (; bit_i < bit_top; bit_i += bit_stride)
                     {
-                        if (!pool.freebits.test(biti))
+                        if (!pool.freebits.test(bit_i))
                             goto Lnotfree;
                     }
                     pool.pagetable[pn] = B_FREE;
@@ -2320,11 +2322,12 @@ struct Gcx
                     p = pool.baseAddr + pn * PAGESIZE;
                     for (u = 0; u < PAGESIZE; u += size)
                     {
-                        biti = bitbase + u / 16;
-                        if (pool.freebits.test(biti))
+                        bit_i = bit_base + u / 16;
+                        if (pool.freebits.test(bit_i))
                         {
                             List *list = cast(List *)(p + u);
-                            if (list.next != bucket[bin])       // avoid unnecessary writes
+                            // avoid unnecessary writes
+                            if (list.next != bucket[bin])
                                 list.next = bucket[bin];
                             bucket[bin] = list;
                         }
@@ -2343,31 +2346,31 @@ struct Gcx
     /**
      *
      */
-    uint getBits(Pool* pool, size_t biti)
+    uint getAttr(Pool* pool, size_t bit_i)
     in
     {
         assert( pool );
     }
     body
     {
-        uint bits;
+        uint attrs;
 
         if (pool.finals.nbits &&
-            pool.finals.test(biti))
-            bits |= BlkAttr.FINALIZE;
-        if (pool.noscan.test(biti))
-            bits |= BlkAttr.NO_SCAN;
+            pool.finals.test(bit_i))
+            attrs |= BlkAttr.FINALIZE;
+        if (pool.noscan.test(bit_i))
+            attrs |= BlkAttr.NO_SCAN;
 //        if (pool.nomove.nbits &&
-//            pool.nomove.test(biti))
-//            bits |= BlkAttr.NO_MOVE;
-        return bits;
+//            pool.nomove.test(bit_i))
+//            attrs |= BlkAttr.NO_MOVE;
+        return attrs;
     }
 
 
     /**
      *
      */
-    void setBits(Pool* pool, size_t biti, uint mask)
+    void setAttr(Pool* pool, size_t bit_i, uint mask)
     in
     {
         assert( pool );
@@ -2378,17 +2381,17 @@ struct Gcx
         {
             if (!pool.finals.nbits)
                 pool.finals.alloc(pool.mark.nbits);
-            pool.finals.set(biti);
+            pool.finals.set(bit_i);
         }
         if (mask & BlkAttr.NO_SCAN)
         {
-            pool.noscan.set(biti);
+            pool.noscan.set(bit_i);
         }
 //        if (mask & BlkAttr.NO_MOVE)
 //        {
 //            if (!pool.nomove.nbits)
 //                pool.nomove.alloc(pool.mark.nbits);
-//            pool.nomove.set(biti);
+//            pool.nomove.set(bit_i);
 //        }
     }
 
@@ -2396,7 +2399,7 @@ struct Gcx
     /**
      *
      */
-    void clrBits(Pool* pool, size_t biti, uint mask)
+    void clrAttr(Pool* pool, size_t bit_i, uint mask)
     in
     {
         assert( pool );
@@ -2404,11 +2407,11 @@ struct Gcx
     body
     {
         if (mask & BlkAttr.FINALIZE && pool.finals.nbits)
-            pool.finals.clear(biti);
+            pool.finals.clear(bit_i);
         if (mask & BlkAttr.NO_SCAN)
-            pool.noscan.clear(biti);
+            pool.noscan.clear(bit_i);
 //        if (mask & BlkAttr.NO_MOVE && pool.nomove.nbits)
-//            pool.nomove.clear(biti);
+//            pool.nomove.clear(bit_i);
     }
 
 }

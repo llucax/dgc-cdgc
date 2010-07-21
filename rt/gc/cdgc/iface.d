@@ -144,19 +144,19 @@ extern (C) uint gc_clrAttr( void* p, uint a )
     return _gc.clrAttr( p, a );
 }
 
-extern (C) void* gc_malloc( size_t sz, uint ba = 0 )
+extern (C) void* gc_malloc(size_t sz, uint attrs = 0)
 {
-    return _gc.malloc( sz, ba );
+    return _gc.malloc(sz, attrs);
 }
 
-extern (C) void* gc_calloc( size_t sz, uint ba = 0 )
+extern (C) void* gc_calloc(size_t sz, uint attrs = 0)
 {
-    return _gc.calloc( sz, ba );
+    return _gc.calloc(sz, attrs);
 }
 
-extern (C) void* gc_realloc( void* p, size_t sz, uint ba = 0 )
+extern (C) void* gc_realloc(void* p, size_t sz, uint attrs = 0)
 {
-    return _gc.realloc( p, sz, ba );
+    return _gc.realloc(p, sz, attrs);
 }
 
 extern (C) size_t gc_extend( void* p, size_t mx, size_t sz )

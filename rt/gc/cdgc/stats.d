@@ -202,12 +202,12 @@ private:
                 if (bin < .gc.B_PAGE)
                 {
                     size_t size = .gc.binsize[bin];
-                    size_t bitstride = size / 16;
-                    size_t bitbase = pn * (.gc.PAGESIZE / 16);
-                    size_t bittop = bitbase + (.gc.PAGESIZE / 16);
-                    for (auto biti = bitbase; biti < bittop; biti += bitstride)
+                    size_t attrstride = size / 16;
+                    size_t attrbase = pn * (.gc.PAGESIZE / 16);
+                    size_t attrtop = attrbase + (.gc.PAGESIZE / 16);
+                    for (auto attri = attrbase; attri < attrtop; attri += attrstride)
                     {
-                        if (pool.freebits.test(biti))
+                        if (pool.freebits.test(attri))
                             mem_info.free += size;
                         else
                             mem_info.used += size; // TODO: wasted
