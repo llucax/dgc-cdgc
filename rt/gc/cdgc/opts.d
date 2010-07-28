@@ -51,6 +51,7 @@ struct Options
     char[MAX_OPT_LEN] collect_stats_file = "";
     bool sentinel = false;
     bool mem_stomp = false;
+    bool conservative = false;
 }
 
 package Options options;
@@ -84,6 +85,8 @@ void process_option(char* opt_name, char* opt_value)
         options.sentinel = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "mem_stomp"))
         options.mem_stomp = parse_bool(opt_value);
+    else if (cstr_eq(opt_name, "conservative"))
+        options.conservative = parse_bool(opt_value);
 }
 
 
@@ -141,6 +144,7 @@ unittest
         assert (log_file[0] == '\0');
         assert (sentinel == false);
         assert (mem_stomp == false);
+        assert (conservative == false);
     }
     parse("mem_stomp");
     with (options) {
@@ -148,13 +152,15 @@ unittest
         assert (log_file[0] == '\0');
         assert (sentinel == false);
         assert (mem_stomp == true);
+        assert (conservative == false);
     }
-    parse("mem_stomp=0:verbose=2");
+    parse("mem_stomp=0:verbose=2:conservative");
     with (options) {
         assert (verbose == 2);
         assert (log_file[0] == '\0');
         assert (sentinel == false);
         assert (mem_stomp == false);
+        assert (conservative == true);
     }
     parse("log_file=12345 67890:verbose=1:sentinel=4:mem_stomp=1");
     with (options) {
@@ -162,6 +168,7 @@ unittest
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
         assert (sentinel == true);
         assert (mem_stomp == true);
+        assert (conservative == true);
     }
     parse(null);
     with (options) {
@@ -169,6 +176,7 @@ unittest
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
         assert (sentinel == true);
         assert (mem_stomp == true);
+        assert (conservative == true);
     }
 }
 

@@ -92,6 +92,11 @@ package enum BlkAttr : uint
     ALL_BITS = 0b1111_1111
 }
 
+package bool has_pointermap(uint attrs)
+{
+    return !opts.options.conservative && !(attrs & BlkAttr.NO_SCAN);
+}
+
 private
 {
 
@@ -344,11 +349,9 @@ class GC
         if (opts.options.sentinel)
             size += SENTINEL_EXTRA;
 
-        bool has_pm = !(attrs & BlkAttr.NO_SCAN);
-        size_t pm_bitmask_size;
+        bool has_pm = has_pointermap(attrs);
         if (has_pm)
-            pm_bitmask_size = (size_t*).sizeof;
-        size += pm_bitmask_size;
+            size += size_t.sizeof;
 
         // Compute size bin
         // Cache previous binsize lookup - Dave Fladebo.
@@ -400,7 +403,7 @@ class GC
 
             // Return next item from free list
             gcx.bucket[bin] = (cast(List*)p).next;
-            if( !(attrs & BlkAttr.NO_SCAN) )
+            if (!(attrs & BlkAttr.NO_SCAN))
                 memset(p + size, 0, capacity - size);
             if (opts.options.mem_stomp)
                 memset(p, 0xF0, size);
@@ -418,9 +421,9 @@ class GC
         // Store the bit mask AFTER SENTINEL_POST
         // TODO: store it BEFORE, so the bitmask is protected too
         if (has_pm) {
-            auto end_of_blk = cast(size_t**)(p + capacity - pm_bitmask_size);
+            auto end_of_blk = cast(size_t**)(p + capacity - size_t.sizeof);
             *end_of_blk = pm_bitmask;
-            size -= pm_bitmask_size;
+            size -= size_t.sizeof;
         }
 
         if (opts.options.sentinel) {
@@ -525,14 +528,14 @@ class GC
 
             void* blk_base_addr = gcx.findBase(p);
             size_t blk_size = gcx.findSize(p);
-            bool has_pm = !(attrs & BlkAttr.NO_SCAN);
+            bool has_pm = has_pointermap(attrs);
             size_t pm_bitmask_size = 0;
             if (has_pm) {
-                pm_bitmask_size = (size_t*).sizeof;
+                pm_bitmask_size = size_t.sizeof;
                 // Retrieve pointer map bit mask if appropriate
                 if (pm_bitmask is null) {
                     auto end_of_blk = cast(size_t**)(blk_base_addr +
-                            blk_size - pm_bitmask_size);
+                            blk_size - size_t.sizeof);
                     pm_bitmask = *end_of_blk;
                 }
             }
@@ -677,22 +680,22 @@ class GC
 
         void* blk_base_addr = gcx.findBase(p);
         size_t blk_size = gcx.findSize(p);
-        bool has_pm = !(attrs & BlkAttr.NO_SCAN);
+        bool has_pm = has_pointermap(attrs);
         size_t* pm_bitmask = null;
         size_t pm_bitmask_size = 0;
         if (has_pm) {
-            pm_bitmask_size = (size_t*).sizeof;
+            pm_bitmask_size = size_t.sizeof;
             // Retrieve pointer map bit mask
             auto end_of_blk = cast(size_t**)(blk_base_addr +
-                    blk_size - pm_bitmask_size);
+                    blk_size - size_t.sizeof);
             pm_bitmask = *end_of_blk;
+
+            minsize += size_t.sizeof;
+            maxsize += size_t.sizeof;
         }
 
         if (blk_size < PAGESIZE)
             return 0; // cannot extend buckets
-
-        minsize += pm_bitmask_size;
-        maxsize += pm_bitmask_size;
 
         auto psz = blk_size / PAGESIZE;
         auto minsz = (minsize + PAGESIZE - 1) / PAGESIZE;
@@ -726,7 +729,7 @@ class GC
         gcx.size_cache = 0;
 
         if (has_pm) {
-            new_size -= pm_bitmask_size;
+            new_size -= size_t.sizeof;
             auto end_of_blk = cast(size_t**)(blk_base_addr + new_size);
             *end_of_blk = pm_bitmask;
         }
@@ -914,10 +917,9 @@ class GC
         uint attrs = gcx.getAttr(pool, biti);
 
         size_t size = gcx.findSize(p);
-        bool has_pm = !(attrs & BlkAttr.NO_SCAN);
         size_t pm_bitmask_size = 0;
-        if (has_pm)
-            pm_bitmask_size = (size_t*).sizeof;
+        if (has_pointermap(attrs))
+            pm_bitmask_size = size_t.sizeof;
 
         if (opts.options.sentinel) {
             // Check for interior pointer
@@ -1972,10 +1974,6 @@ struct Gcx
         size_t pcache = 0;
         uint changes = 0;
 
-        // TODO: add option to be conservative
-        // force conservative scanning
-        //pm_bitmask = PointerMap.init.bits.ptr;
-
         size_t type_size = pm_bitmask[0];
         size_t* pm_bits = pm_bitmask + 1;
 
@@ -2237,10 +2235,14 @@ struct Gcx
                         pn = cast(size_t)(o - pool.baseAddr) / PAGESIZE;
                         bin = cast(Bins)pool.pagetable[pn];
                         if (bin < B_PAGE) {
-                            auto end_of_blk = cast(size_t**)(o + binsize[bin] -
-                                    (size_t*).sizeof);
-                            size_t* pm_bitmask = *end_of_blk;
-                            mark(o, end_of_blk, pm_bitmask);
+                            if (opts.options.conservative)
+                                mark_conservative(o, o + binsize[bin]);
+                            else {
+                                auto end_of_blk = cast(size_t**)(o +
+                                        binsize[bin] - size_t.sizeof);
+                                size_t* pm_bitmask = *end_of_blk;
+                                mark(o, end_of_blk, pm_bitmask);
+                            }
                         }
                         else if (bin == B_PAGE || bin == B_PAGEPLUS)
                         {
@@ -2255,10 +2257,14 @@ struct Gcx
                                 u++;
 
                             size_t blk_size = u * PAGESIZE;
-                            auto end_of_blk = cast(size_t**)(o + blk_size -
-                                    (size_t*).sizeof);
-                            size_t* pm_bitmask = *end_of_blk;
-                            mark(o, end_of_blk, pm_bitmask);
+                            if (opts.options.conservative)
+                                mark_conservative(o, o + blk_size);
+                            else {
+                                auto end_of_blk = cast(size_t**)(o + blk_size -
+                                        size_t.sizeof);
+                                size_t* pm_bitmask = *end_of_blk;
+                                mark(o, end_of_blk, pm_bitmask);
+                            }
                         }
                     }
                 }
