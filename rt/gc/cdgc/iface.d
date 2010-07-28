@@ -104,7 +104,7 @@ extern (C) void gc_term()
                                   // static data area, roots, and ranges.
     } else {
         // default (safe) clenup
-        _gc.fullCollect(); 
+        _gc.fullCollect();
     }
 }
 
@@ -144,19 +144,22 @@ extern (C) uint gc_clrAttr( void* p, uint a )
     return _gc.clrAttr( p, a );
 }
 
-extern (C) void* gc_malloc(size_t sz, uint attrs = 0)
+extern (C) void* gc_malloc(size_t sz, uint attrs = 0,
+        PointerMap ptrmap = PointerMap.init)
 {
-    return _gc.malloc(sz, attrs);
+    return _gc.malloc(sz, attrs, ptrmap);
 }
 
-extern (C) void* gc_calloc(size_t sz, uint attrs = 0)
+extern (C) void* gc_calloc(size_t sz, uint attrs = 0,
+        PointerMap ptrmap = PointerMap.init)
 {
-    return _gc.calloc(sz, attrs);
+    return _gc.calloc(sz, attrs, ptrmap);
 }
 
-extern (C) void* gc_realloc(void* p, size_t sz, uint attrs = 0)
+extern (C) void* gc_realloc(void* p, size_t sz, uint attrs = 0,
+        PointerMap ptrmap = PointerMap.init)
 {
-    return _gc.realloc(p, sz, attrs);
+    return _gc.realloc(p, sz, attrs, ptrmap);
 }
 
 extern (C) size_t gc_extend( void* p, size_t mx, size_t sz )

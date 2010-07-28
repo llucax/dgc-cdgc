@@ -129,6 +129,8 @@ struct MallocInfo
     uint attr = 0;
     /// True if this malloc() triggered a collection.
     bool collected = false;
+    /// Address of the pointer map bitmask.
+    size_t* ptrmap = null;
 }
 
 
@@ -234,15 +236,18 @@ private:
         if (this.mallocs_file is null)
             return;
         cstdio.fprintf(this.mallocs_file,
-                "%f,%f,%zu,%zu,%zu,%zu,%zu\n",
-                //0  1   2   3   4   5   6
+                "%f,%f,%zu,%zu,%zu,%zu,%zu,%p\n",
+                //0  1   2   3   4   5   6  7
                 this.malloc_info.timestamp,                   // 0
                 this.malloc_info.time,                        // 1
                 this.malloc_info.size,                        // 2
                 this.malloc_info.collected ? 1u : 0u,         // 3
                 this.malloc_info.attr & .gc.BlkAttr.FINALIZE, // 4
                 this.malloc_info.attr & .gc.BlkAttr.NO_SCAN,  // 5
-                this.malloc_info.attr & .gc.BlkAttr.NO_MOVE); // 6
+                this.malloc_info.attr & .gc.BlkAttr.NO_MOVE,  // 6
+                this.malloc_info.ptrmap);                     // 7
+        // TODO: make it an option
+        cstdio.fflush(this.mallocs_file);
     }
 
     void print_collection()
@@ -264,6 +269,8 @@ private:
                 this.collection_info.after.free,          // 9
                 this.collection_info.after.wasted,        // 10
                 this.collection_info.after.overhead);     // 11
+        // TODO: make it an option
+        cstdio.fflush(this.collections_file);
     }
 
 
@@ -285,7 +292,7 @@ public:
             this_.mallocs_file = this_.start_file(
                     options.malloc_stats_file.ptr,
                     "Timestamp,Time,Size,Collection triggered,"
-                    "Finalize,No scan,No move\n");
+                    "Finalize,No scan,No move,Pointer map\n");
         }
         // collection
         if (options.collect_stats_file[0] != '\0') {
@@ -309,7 +316,8 @@ public:
     }
 
     /// Inform the start of an allocation.
-    void malloc_started(size_t size, uint attr)
+    // TODO: store/use type information
+    void malloc_started(size_t size, uint attr, size_t* ptrmap_bitmask)
     {
         if (!this.active)
             return;
@@ -321,6 +329,7 @@ public:
         this.malloc_info.time = now;
         this.malloc_info.size = size;
         this.malloc_info.attr = attr;
+        this.malloc_info.ptrmap = ptrmap_bitmask;
         // this.malloc_info.collected is filled in malloc_finished()
         // collection
         this.collection_info = this.collection_info.init;
