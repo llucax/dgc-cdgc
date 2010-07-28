@@ -90,7 +90,9 @@ void process_option(char* opt_name, char* opt_value)
 package void parse(char* opts_string)
 {
     char[MAX_OPT_LEN] opt_name;
+    opt_name[0] = '\0';
     char[MAX_OPT_LEN] opt_value;
+    opt_value[0] = '\0';
     char* curr = opt_name.ptr;
     size_t i = 0;
     if (opts_string is null)
@@ -140,26 +142,33 @@ unittest
         assert (sentinel == false);
         assert (mem_stomp == false);
     }
-    parse("mem_stomp=1:verbose=2");
+    parse("mem_stomp");
     with (options) {
-        assert (verbose == 2);
+        assert (verbose == 0);
         assert (log_file[0] == '\0');
         assert (sentinel == false);
         assert (mem_stomp == true);
     }
-    parse("log_file=12345 67890:verbose=1:sentinel=4:mem_stomp=0");
+    parse("mem_stomp=0:verbose=2");
+    with (options) {
+        assert (verbose == 2);
+        assert (log_file[0] == '\0');
+        assert (sentinel == false);
+        assert (mem_stomp == false);
+    }
+    parse("log_file=12345 67890:verbose=1:sentinel=4:mem_stomp=1");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
         assert (sentinel == true);
-        assert (mem_stomp == false);
+        assert (mem_stomp == true);
     }
     parse(null);
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
         assert (sentinel == true);
-        assert (mem_stomp == false);
+        assert (mem_stomp == true);
     }
 }
 
