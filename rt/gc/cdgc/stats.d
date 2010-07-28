@@ -123,6 +123,8 @@ struct MallocInfo
     double timestamp = -1.0;
     /// Time spent in the malloc() call (in seconds).
     double time = -1.0;
+    /// Address of the pointer returned by malloc.
+    void* ptr = null;
     /// Memory requested by the malloc() call (in bytes).
     size_t size = 0;
     /// Memory attributes as BlkAttr flags.
@@ -236,16 +238,17 @@ private:
         if (this.mallocs_file is null)
             return;
         cstdio.fprintf(this.mallocs_file,
-                "%f,%f,%zu,%zu,%zu,%zu,%zu,%p\n",
-                //0  1   2   3   4   5   6  7
+                "%f,%f,%p,%zu,%zu,%zu,%zu,%zu,%p\n",
+                //0  1   2   3   4   5   6  7  8
                 this.malloc_info.timestamp,                   // 0
                 this.malloc_info.time,                        // 1
-                this.malloc_info.size,                        // 2
-                this.malloc_info.collected ? 1u : 0u,         // 3
-                this.malloc_info.attr & .gc.BlkAttr.FINALIZE, // 4
-                this.malloc_info.attr & .gc.BlkAttr.NO_SCAN,  // 5
-                this.malloc_info.attr & .gc.BlkAttr.NO_MOVE,  // 6
-                this.malloc_info.ptrmap);                     // 7
+                this.malloc_info.ptr,                         // 2
+                this.malloc_info.size,                        // 3
+                this.malloc_info.collected ? 1u : 0u,         // 4
+                this.malloc_info.attr & .gc.BlkAttr.FINALIZE, // 5
+                this.malloc_info.attr & .gc.BlkAttr.NO_SCAN,  // 6
+                this.malloc_info.attr & .gc.BlkAttr.NO_MOVE,  // 7
+                this.malloc_info.ptrmap);                     // 8
         // TODO: make it an option
         cstdio.fflush(this.mallocs_file);
     }
@@ -291,7 +294,7 @@ public:
             this_.active = true;
             this_.mallocs_file = this_.start_file(
                     options.malloc_stats_file.ptr,
-                    "Timestamp,Time,Size,Collection triggered,"
+                    "Timestamp,Time,Pointer,Size,Collection triggered,"
                     "Finalize,No scan,No move,Pointer map\n");
         }
         // collection
@@ -338,7 +341,7 @@ public:
     }
 
     /// Inform the end of an allocation.
-    void malloc_finished()
+    void malloc_finished(void* ptr)
     {
         if (!this.active)
             return;
@@ -348,6 +351,7 @@ public:
         this.malloc_info.time = now - this.malloc_info.time;
         if (collected)
             this.malloc_info.collected = true;
+        this.malloc_info.ptr = ptr;
         this.print_malloc();
         if (!collected)
             return;

@@ -334,7 +334,7 @@ class GC
 
         stats.malloc_started(size, attrs, pm_bitmask);
         scope (exit)
-            stats.malloc_finished();
+            stats.malloc_finished(p);
 
         void *p = null;
         Bins bin;
