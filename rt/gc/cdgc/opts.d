@@ -56,38 +56,34 @@ struct Options
 package Options options;
 
 
+bool cstr_eq(char* s1, char* s2)
+{
+    return cstring.strcmp(s1, s2) == 0;
+}
+
+
+bool parse_bool(char* value)
+{
+    if (value[0] == '\0')
+        return true;
+    return (cstdlib.atoi(value) != 0);
+}
+
+
 void process_option(char* opt_name, char* opt_value)
 {
-    if (cstring.strcmp(opt_name, "verbose") == 0)
-    {
+    if (cstr_eq(opt_name, "verbose"))
         options.verbose = cstdlib.atoi(opt_value);
-    }
-    else if (cstring.strcmp(opt_name, "log_file") == 0)
-    {
+    else if (cstr_eq(opt_name, "log_file"))
         cstring.strcpy(options.log_file.ptr, opt_value);
-    }
-    else if (cstring.strcmp(opt_name, "malloc_stats_file") == 0)
-    {
+    else if (cstr_eq(opt_name, "malloc_stats_file"))
         cstring.strcpy(options.malloc_stats_file.ptr, opt_value);
-    }
-    else if (cstring.strcmp(opt_name, "collect_stats_file") == 0)
-    {
+    else if (cstr_eq(opt_name, "collect_stats_file"))
         cstring.strcpy(options.collect_stats_file.ptr, opt_value);
-    }
-    else if (cstring.strcmp(opt_name, "sentinel") == 0)
-    {
-        if (opt_value[0] == '\0')
-            options.sentinel = true;
-        else
-            options.sentinel = (cstdlib.atoi(opt_value) != 0);
-    }
-    else if (cstring.strcmp(opt_name, "mem_stomp") == 0)
-    {
-        if (opt_value[0] == '\0')
-            options.mem_stomp = true;
-        else
-            options.mem_stomp = (cstdlib.atoi(opt_value) != 0);
-    }
+    else if (cstr_eq(opt_name, "sentinel"))
+        options.sentinel = parse_bool(opt_value);
+    else if (cstr_eq(opt_name, "mem_stomp"))
+        options.mem_stomp = parse_bool(opt_value);
 }
 
 
