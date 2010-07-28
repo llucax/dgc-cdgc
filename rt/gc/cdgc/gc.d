@@ -138,19 +138,10 @@ alias GC gc_t;
 class GCLock { }                // just a dummy so we can get a global lock
 
 
-const uint GCVERSION = 1;       // increment every time we change interface
-                                // to GC.
-
 Stats stats;
 
 class GC
 {
-    // For passing to debug code
-    static size_t line;
-    static char*  file;
-
-    uint gcversion = GCVERSION;
-
     Gcx *gcx;                   // implementation
     static ClassInfo gcLock;    // global lock
 
@@ -1443,7 +1434,6 @@ struct Gcx
     size_t size_cache;
 
     uint noStack;       // !=0 means don't scan stack
-    uint log;           // turn on logging
     uint anychanges;
     void *stackBottom;
     uint inited;
@@ -2183,13 +2173,11 @@ struct Gcx
 
         // Scan ranges
         debug(COLLECT_PRINTF) printf("scan ranges[]\n");
-        //log++;
         for (n = 0; n < ranges.length; n++)
         {
             debug(COLLECT_PRINTF) printf("\t%x .. %x\n", ranges[n].pbot, ranges[n].ptop);
             mark_conservative(ranges[n].pbot, ranges[n].ptop);
         }
-        //log--;
 
         debug(COLLECT_PRINTF) printf("\tscan heap\n");
         while (anychanges)
