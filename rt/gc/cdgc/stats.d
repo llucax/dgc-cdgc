@@ -237,9 +237,11 @@ private:
     {
         if (this.mallocs_file is null)
             return;
+        auto ptrmap = this.malloc_info.ptrmap;
+        auto ptrmask_offset = (ptrmap[0] - 1) / (size_t.sizeof * 8) + 1;
         cstdio.fprintf(this.mallocs_file,
-                "%f,%f,%p,%zu,%zu,%zu,%zu,%zu,%p\n",
-                //0  1   2   3   4   5   6  7  8
+                "%f,%f,%p,%zu,%zu,%zu,%zu,%zu,%p,%zu,%0*zX,%0*zX\n",
+                //0  1   2   3   4   5   6  7  8   9    10    11
                 this.malloc_info.timestamp,                   // 0
                 this.malloc_info.time,                        // 1
                 this.malloc_info.ptr,                         // 2
@@ -248,7 +250,12 @@ private:
                 this.malloc_info.attr & .gc.BlkAttr.FINALIZE, // 5
                 this.malloc_info.attr & .gc.BlkAttr.NO_SCAN,  // 6
                 this.malloc_info.attr & .gc.BlkAttr.NO_MOVE,  // 7
-                this.malloc_info.ptrmap);                     // 8
+                ptrmap,                                       // 8
+                ptrmap[0] * size_t.sizeof,                    // 9
+                size_t.sizeof,                                // fill length
+                ptrmap[1],                                    // 10
+                size_t.sizeof,                                // fill length
+                ptrmap[1 + ptrmask_offset]);                  // 11
         // TODO: make it an option
         cstdio.fflush(this.mallocs_file);
     }
@@ -295,7 +302,9 @@ public:
             this_.mallocs_file = this_.start_file(
                     options.malloc_stats_file.ptr,
                     "Timestamp,Time,Pointer,Size,Collection triggered,"
-                    "Finalize,No scan,No move,Pointer map\n");
+                    "Finalize,No scan,No move,Pointer map,Type size,"
+                    "Pointer map scan bitmask (first word, hexa),"
+                    "Pointer map pointer bitmask (first word, hexa)\n");
         }
         // collection
         if (options.collect_stats_file[0] != '\0') {
