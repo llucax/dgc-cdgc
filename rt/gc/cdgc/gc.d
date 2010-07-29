@@ -189,7 +189,7 @@ class GCLock { }                // just a dummy so we can get a global lock
 
 struct GC
 {
-    static ClassInfo gcLock;    // global lock
+    ClassInfo lock;    // global lock
 
     void *p_cache;
     size_t size_cache;
@@ -1264,7 +1264,7 @@ struct GC
         int dummy;
         stackBottom = cast(char*)&dummy;
         opts.parse(cstdlib.getenv("D_GC_OPTS"));
-        gcLock = GCLock.classinfo;
+        lock = GCLock.classinfo;
         inited = 1;
         setStackBottom(rt_stackBottom());
         stats = Stats(this);
@@ -1281,7 +1281,7 @@ struct GC
             assert(this.disabled > 0);
             this.disabled--;
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             assert(this.disabled > 0);
             this.disabled--;
@@ -1298,7 +1298,7 @@ struct GC
         {
             this.disabled++;
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             this.disabled++;
         }
@@ -1333,7 +1333,7 @@ struct GC
         {
             return go();
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return go();
         }
@@ -1369,7 +1369,7 @@ struct GC
         {
             return go();
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return go();
         }
@@ -1405,7 +1405,7 @@ struct GC
         {
             return go();
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return go();
         }
@@ -1426,7 +1426,7 @@ struct GC
         {
             return mallocNoSync(size, attrs, ptrmap.bits.ptr);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return mallocNoSync(size, attrs, ptrmap.bits.ptr);
         }
@@ -1481,7 +1481,7 @@ struct GC
                          * and lock for a collection, since a finalizer
                          * may start a new thread.
                          */
-                        synchronized (gcLock)
+                        synchronized (lock)
                         {
                             this.fullcollectshell();
                         }
@@ -1558,7 +1558,7 @@ struct GC
         {
             return callocNoSync(size, attrs, ptrmap.bits.ptr);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return callocNoSync(size, attrs, ptrmap.bits.ptr);
         }
@@ -1587,7 +1587,7 @@ struct GC
         {
             return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
         }
@@ -1669,7 +1669,7 @@ struct GC
                     if (newsz < psz)
                     {
                         // Shrink in place
-                        synchronized (gcLock)
+                        synchronized (lock)
                         {
                             if (opts.options.mem_stomp)
                                 memset(p + size - pm_bitmask_size, 0xF2,
@@ -1687,7 +1687,7 @@ struct GC
                     else if (pagenum + newsz <= pool.npages)
                     {
                         // Attempt to expand in place
-                        synchronized (gcLock)
+                        synchronized (lock)
                         {
                             for (size_t i = pagenum + psz; 1;)
                             {
@@ -1751,7 +1751,7 @@ struct GC
         {
             return extendNoSync(p, minsize, maxsize);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return extendNoSync(p, minsize, maxsize);
         }
@@ -1852,7 +1852,7 @@ struct GC
         {
             return reserveNoSync(size);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return reserveNoSync(size);
         }
@@ -1873,7 +1873,7 @@ struct GC
         {
             return freeNoSync(p);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return freeNoSync(p);
         }
@@ -1945,7 +1945,7 @@ struct GC
         {
             return addrOfNoSync(p);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return addrOfNoSync(p);
         }
@@ -1981,7 +1981,7 @@ struct GC
         {
             return sizeOfNoSync(p);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return sizeOfNoSync(p);
         }
@@ -2054,7 +2054,7 @@ struct GC
         {
             return queryNoSync(p);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             return queryNoSync(p);
         }
@@ -2089,7 +2089,7 @@ struct GC
         {
             checkNoSync(p);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             checkNoSync(p);
         }
@@ -2178,7 +2178,7 @@ struct GC
             if (roots.append(p) is null)
                 onOutOfMemoryError();
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             if (roots.append(p) is null)
                 onOutOfMemoryError();
@@ -2201,7 +2201,7 @@ struct GC
         {
             r = roots.remove(p);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             r = roots.remove(p);
         }
@@ -2224,7 +2224,7 @@ struct GC
             if (ranges.append(Range(p, p+sz)) is null)
                 onOutOfMemoryError();
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             if (ranges.append(Range(p, p+sz)) is null)
                 onOutOfMemoryError();
@@ -2247,7 +2247,7 @@ struct GC
         {
             r = ranges.remove(Range(p, null));
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             r = ranges.remove(Range(p, null));
         }
@@ -2265,7 +2265,7 @@ struct GC
         {
             this.fullcollectshell();
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             this.fullcollectshell();
         }
@@ -2290,7 +2290,7 @@ struct GC
             this.fullcollectshell();
             this.noStack--;
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             this.noStack++;
             this.fullcollectshell();
@@ -2308,7 +2308,7 @@ struct GC
         {
             this.minimizeNoSync();
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             this.minimizeNoSync();
         }
@@ -2325,7 +2325,7 @@ struct GC
         {
             getStatsNoSync(stats);
         }
-        else synchronized (gcLock)
+        else synchronized (lock)
         {
             getStatsNoSync(stats);
         }
@@ -2381,7 +2381,7 @@ struct GC
     private T locked(T)(in T delegate() code)
     {
         if (thread_needLock)
-            synchronized(gcLock) return code();
+            synchronized(lock) return code();
         else
            return code();
     }
