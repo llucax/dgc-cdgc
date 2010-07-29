@@ -44,7 +44,7 @@ version = STACKGROWSDOWN;       // growing the stack means subtracting from the 
 
 import rt.gc.cdgc.bits: GCBits;
 import rt.gc.cdgc.stats: GCStats, Stats;
-import rt.gc.cdgc.dynarray: DynArray;
+import dynarray = rt.gc.cdgc.dynarray;
 import alloc = rt.gc.cdgc.alloc;
 import opts = rt.gc.cdgc.opts;
 
@@ -129,1243 +129,6 @@ private
 }
 
 
-alias GC gc_t;
-
-
-/* ============================ GC =============================== */
-
-
-class GCLock { }                // just a dummy so we can get a global lock
-
-
-Stats stats;
-
-class GC
-{
-    Gcx *gcx;                   // implementation
-    static ClassInfo gcLock;    // global lock
-
-
-    void initialize()
-    {
-        opts.parse(cstdlib.getenv("D_GC_OPTS"));
-        gcLock = GCLock.classinfo;
-        gcx = cast(Gcx*) cstdlib.calloc(1, Gcx.sizeof);
-        if (!gcx)
-            onOutOfMemoryError();
-        gcx.initialize();
-        setStackBottom(rt_stackBottom());
-        stats = Stats(this);
-    }
-
-
-    /**
-     *
-     */
-    void enable()
-    {
-        if (!thread_needLock())
-        {
-            assert(gcx.disabled > 0);
-            gcx.disabled--;
-        }
-        else synchronized (gcLock)
-        {
-            assert(gcx.disabled > 0);
-            gcx.disabled--;
-        }
-    }
-
-
-    /**
-     *
-     */
-    void disable()
-    {
-        if (!thread_needLock())
-        {
-            gcx.disabled++;
-        }
-        else synchronized (gcLock)
-        {
-            gcx.disabled++;
-        }
-    }
-
-
-    /**
-     *
-     */
-    uint getAttr(void* p)
-    {
-        if (!p)
-        {
-            return 0;
-        }
-
-        uint go()
-        {
-            Pool* pool = gcx.findPool(p);
-            uint  old_attrs = 0;
-
-            if (pool)
-            {
-                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-
-                old_attrs = gcx.getAttr(pool, bit_i);
-            }
-            return old_attrs;
-        }
-
-        if (!thread_needLock())
-        {
-            return go();
-        }
-        else synchronized (gcLock)
-        {
-            return go();
-        }
-    }
-
-
-    /**
-     *
-     */
-    uint setAttr(void* p, uint mask)
-    {
-        if (!p)
-        {
-            return 0;
-        }
-
-        uint go()
-        {
-            Pool* pool = gcx.findPool(p);
-            uint  old_attrs = 0;
-
-            if (pool)
-            {
-                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-
-                old_attrs = gcx.getAttr(pool, bit_i);
-                gcx.setAttr(pool, bit_i, mask);
-            }
-            return old_attrs;
-        }
-
-        if (!thread_needLock())
-        {
-            return go();
-        }
-        else synchronized (gcLock)
-        {
-            return go();
-        }
-    }
-
-
-    /**
-     *
-     */
-    uint clrAttr(void* p, uint mask)
-    {
-        if (!p)
-        {
-            return 0;
-        }
-
-        uint go()
-        {
-            Pool* pool = gcx.findPool(p);
-            uint  old_attrs = 0;
-
-            if (pool)
-            {
-                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-
-                old_attrs = gcx.getAttr(pool, bit_i);
-                gcx.clrAttr(pool, bit_i, mask);
-            }
-            return old_attrs;
-        }
-
-        if (!thread_needLock())
-        {
-            return go();
-        }
-        else synchronized (gcLock)
-        {
-            return go();
-        }
-    }
-
-
-    /**
-     *
-     */
-    void *malloc(size_t size, uint attrs, PointerMap ptrmap)
-    {
-        if (!size)
-        {
-            return null;
-        }
-
-        if (!thread_needLock())
-        {
-            return mallocNoSync(size, attrs, ptrmap.bits.ptr);
-        }
-        else synchronized (gcLock)
-        {
-            return mallocNoSync(size, attrs, ptrmap.bits.ptr);
-        }
-    }
-
-
-    //
-    //
-    //
-    private void *mallocNoSync(size_t size, uint attrs, size_t* pm_bitmask)
-    {
-        assert(size != 0);
-
-        stats.malloc_started(size, attrs, pm_bitmask);
-        scope (exit)
-            stats.malloc_finished(p);
-
-        void *p = null;
-        Bins bin;
-
-        assert(gcx);
-
-        if (opts.options.sentinel)
-            size += SENTINEL_EXTRA;
-
-        bool has_pm = has_pointermap(attrs);
-        if (has_pm)
-            size += size_t.sizeof;
-
-        // Compute size bin
-        // Cache previous binsize lookup - Dave Fladebo.
-        static size_t lastsize = -1;
-        static Bins lastbin;
-        if (size == lastsize)
-            bin = lastbin;
-        else
-        {
-            bin = gcx.findBin(size);
-            lastsize = size;
-            lastbin = bin;
-        }
-
-        size_t capacity; // to figure out where to store the bitmask
-        if (bin < B_PAGE)
-        {
-            p = gcx.bucket[bin];
-            if (p is null)
-            {
-                if (!gcx.allocPage(bin) && !gcx.disabled)   // try to find a new page
-                {
-                    if (!thread_needLock())
-                    {
-                        /* Then we haven't locked it yet. Be sure
-                         * and lock for a collection, since a finalizer
-                         * may start a new thread.
-                         */
-                        synchronized (gcLock)
-                        {
-                            gcx.fullcollectshell();
-                        }
-                    }
-                    else if (!gcx.fullcollectshell())       // collect to find a new page
-                    {
-                        //gcx.newPool(1);
-                    }
-                }
-                if (!gcx.bucket[bin] && !gcx.allocPage(bin))
-                {
-                    gcx.newPool(1);         // allocate new pool to find a new page
-                    int result = gcx.allocPage(bin);
-                    if (!result)
-                        onOutOfMemoryError();
-                }
-                p = gcx.bucket[bin];
-            }
-            capacity = binsize[bin];
-
-            // Return next item from free list
-            gcx.bucket[bin] = (cast(List*)p).next;
-            if (!(attrs & BlkAttr.NO_SCAN))
-                memset(p + size, 0, capacity - size);
-            if (opts.options.mem_stomp)
-                memset(p, 0xF0, size);
-        }
-        else
-        {
-            p = gcx.bigAlloc(size);
-            if (!p)
-                onOutOfMemoryError();
-            // Round the size up to the number of pages needed to store it
-            size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
-            capacity = npages * PAGESIZE;
-        }
-
-        // Store the bit mask AFTER SENTINEL_POST
-        // TODO: store it BEFORE, so the bitmask is protected too
-        if (has_pm) {
-            auto end_of_blk = cast(size_t**)(p + capacity - size_t.sizeof);
-            *end_of_blk = pm_bitmask;
-            size -= size_t.sizeof;
-        }
-
-        if (opts.options.sentinel) {
-            size -= SENTINEL_EXTRA;
-            p = sentinel_add(p);
-            sentinel_init(p, size);
-        }
-
-        if (attrs)
-        {
-            Pool *pool = gcx.findPool(p);
-            assert(pool);
-
-            gcx.setAttr(pool, cast(size_t)(p - pool.baseAddr) / 16, attrs);
-        }
-        return p;
-    }
-
-
-    /**
-     *
-     */
-    void *calloc(size_t size, uint attrs, PointerMap ptrmap)
-    {
-        if (!size)
-        {
-            return null;
-        }
-
-        if (!thread_needLock())
-        {
-            return callocNoSync(size, attrs, ptrmap.bits.ptr);
-        }
-        else synchronized (gcLock)
-        {
-            return callocNoSync(size, attrs, ptrmap.bits.ptr);
-        }
-    }
-
-
-    //
-    //
-    //
-    private void *callocNoSync(size_t size, uint attrs, size_t* pm_bitmask)
-    {
-        assert(size != 0);
-
-        void *p = mallocNoSync(size, attrs, pm_bitmask);
-        memset(p, 0, size);
-        return p;
-    }
-
-
-    /**
-     *
-     */
-    void *realloc(void *p, size_t size, uint attrs, PointerMap ptrmap)
-    {
-        if (!thread_needLock())
-        {
-            return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
-        }
-        else synchronized (gcLock)
-        {
-            return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
-        }
-    }
-
-
-    //
-    //
-    //
-    private void *reallocNoSync(void *p, size_t size, uint attrs,
-            size_t* pm_bitmask)
-    {
-        if (!size)
-        {
-            if (p)
-            {
-                freeNoSync(p);
-                p = null;
-            }
-        }
-        else if (!p)
-        {
-            p = mallocNoSync(size, attrs, pm_bitmask);
-        }
-        else
-        {
-            Pool* pool = gcx.findPool(p);
-            if (pool is null)
-                return null;
-
-            // Set or retrieve attributes as appropriate
-            auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-            if (attrs) {
-                gcx.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
-                gcx.setAttr(pool, bit_i, attrs);
-            }
-            else
-                attrs = gcx.getAttr(pool, bit_i);
-
-            void* blk_base_addr = gcx.findBase(p);
-            size_t blk_size = gcx.findSize(p);
-            bool has_pm = has_pointermap(attrs);
-            size_t pm_bitmask_size = 0;
-            if (has_pm) {
-                pm_bitmask_size = size_t.sizeof;
-                // Retrieve pointer map bit mask if appropriate
-                if (pm_bitmask is null) {
-                    auto end_of_blk = cast(size_t**)(blk_base_addr +
-                            blk_size - size_t.sizeof);
-                    pm_bitmask = *end_of_blk;
-                }
-            }
-
-            if (opts.options.sentinel)
-            {
-                sentinel_Invariant(p);
-                size_t sentinel_stored_size = *sentinel_size(p);
-                if (sentinel_stored_size != size)
-                {
-                    void* p2 = mallocNoSync(size, attrs, pm_bitmask);
-                    if (sentinel_stored_size < size)
-                        size = sentinel_stored_size;
-                    cstring.memcpy(p2, p, size);
-                    p = p2;
-                }
-            }
-            else
-            {
-                size += pm_bitmask_size;
-                if (blk_size >= PAGESIZE && size >= PAGESIZE)
-                {
-                    auto psz = blk_size / PAGESIZE;
-                    auto newsz = (size + PAGESIZE - 1) / PAGESIZE;
-                    if (newsz == psz)
-                        return p;
-
-                    auto pagenum = (p - pool.baseAddr) / PAGESIZE;
-
-                    if (newsz < psz)
-                    {
-                        // Shrink in place
-                        synchronized (gcLock)
-                        {
-                            if (opts.options.mem_stomp)
-                                memset(p + size - pm_bitmask_size, 0xF2,
-                                        blk_size - size - pm_bitmask_size);
-                            pool.freePages(pagenum + newsz, psz - newsz);
-                        }
-                        if (has_pm) {
-                            auto end_of_blk = cast(size_t**)(
-                                    blk_base_addr + (PAGESIZE * newsz) -
-                                    pm_bitmask_size);
-                            *end_of_blk = pm_bitmask;
-                        }
-                        return p;
-                    }
-                    else if (pagenum + newsz <= pool.npages)
-                    {
-                        // Attempt to expand in place
-                        synchronized (gcLock)
-                        {
-                            for (size_t i = pagenum + psz; 1;)
-                            {
-                                if (i == pagenum + newsz)
-                                {
-                                    if (opts.options.mem_stomp)
-                                        memset(p + blk_size - pm_bitmask_size,
-                                                0xF0, size - blk_size
-                                                - pm_bitmask_size);
-                                    memset(pool.pagetable + pagenum +
-                                            psz, B_PAGEPLUS, newsz - psz);
-                                    if (has_pm) {
-                                        auto end_of_blk = cast(size_t**)(
-                                                blk_base_addr +
-                                                (PAGESIZE * newsz) -
-                                                pm_bitmask_size);
-                                        *end_of_blk = pm_bitmask;
-                                    }
-                                    return p;
-                                }
-                                if (i == pool.npages)
-                                {
-                                    break;
-                                }
-                                if (pool.pagetable[i] != B_FREE)
-                                    break;
-                                i++;
-                            }
-                        }
-                    }
-                }
-                // if new size is bigger or less than half
-                if (blk_size < size || blk_size > size * 2)
-                {
-                    size -= pm_bitmask_size;
-                    blk_size -= pm_bitmask_size;
-                    void* p2 = mallocNoSync(size, attrs, pm_bitmask);
-                    if (blk_size < size)
-                        size = blk_size;
-                    cstring.memcpy(p2, p, size);
-                    p = p2;
-                }
-            }
-        }
-        return p;
-    }
-
-
-    /**
-     * Attempt to in-place enlarge the memory block pointed to by p by at least
-     * minbytes beyond its current capacity, up to a maximum of maxsize.  This
-     * does not attempt to move the memory block (like realloc() does).
-     *
-     * Returns:
-     *  0 if could not extend p,
-     *  total size of entire memory block if successful.
-     */
-    size_t extend(void* p, size_t minsize, size_t maxsize)
-    {
-        if (!thread_needLock())
-        {
-            return extendNoSync(p, minsize, maxsize);
-        }
-        else synchronized (gcLock)
-        {
-            return extendNoSync(p, minsize, maxsize);
-        }
-    }
-
-
-    //
-    //
-    //
-    private size_t extendNoSync(void* p, size_t minsize, size_t maxsize)
-    in
-    {
-        assert( minsize <= maxsize );
-    }
-    body
-    {
-        if (opts.options.sentinel)
-            return 0;
-
-        Pool* pool = gcx.findPool(p);
-        if (pool is null)
-            return 0;
-
-        // Retrieve attributes
-        auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-        uint attrs = gcx.getAttr(pool, bit_i);
-
-        void* blk_base_addr = gcx.findBase(p);
-        size_t blk_size = gcx.findSize(p);
-        bool has_pm = has_pointermap(attrs);
-        size_t* pm_bitmask = null;
-        size_t pm_bitmask_size = 0;
-        if (has_pm) {
-            pm_bitmask_size = size_t.sizeof;
-            // Retrieve pointer map bit mask
-            auto end_of_blk = cast(size_t**)(blk_base_addr +
-                    blk_size - size_t.sizeof);
-            pm_bitmask = *end_of_blk;
-
-            minsize += size_t.sizeof;
-            maxsize += size_t.sizeof;
-        }
-
-        if (blk_size < PAGESIZE)
-            return 0; // cannot extend buckets
-
-        auto psz = blk_size / PAGESIZE;
-        auto minsz = (minsize + PAGESIZE - 1) / PAGESIZE;
-        auto maxsz = (maxsize + PAGESIZE - 1) / PAGESIZE;
-
-        auto pagenum = (p - pool.baseAddr) / PAGESIZE;
-
-        size_t sz;
-        for (sz = 0; sz < maxsz; sz++)
-        {
-            auto i = pagenum + psz + sz;
-            if (i == pool.npages)
-                break;
-            if (pool.pagetable[i] != B_FREE)
-            {
-                if (sz < minsz)
-                    return 0;
-                break;
-            }
-        }
-        if (sz < minsz)
-            return 0;
-
-        size_t new_size = (psz + sz) * PAGESIZE;
-
-        if (opts.options.mem_stomp)
-            memset(p + blk_size - pm_bitmask_size, 0xF0,
-                    new_size - blk_size - pm_bitmask_size);
-        memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
-        gcx.p_cache = null;
-        gcx.size_cache = 0;
-
-        if (has_pm) {
-            new_size -= size_t.sizeof;
-            auto end_of_blk = cast(size_t**)(blk_base_addr + new_size);
-            *end_of_blk = pm_bitmask;
-        }
-        return new_size;
-    }
-
-
-    /**
-     *
-     */
-    size_t reserve(size_t size)
-    {
-        if (!size)
-        {
-            return 0;
-        }
-
-        if (!thread_needLock())
-        {
-            return reserveNoSync(size);
-        }
-        else synchronized (gcLock)
-        {
-            return reserveNoSync(size);
-        }
-    }
-
-
-    //
-    //
-    //
-    private size_t reserveNoSync(size_t size)
-    {
-        assert(size != 0);
-        assert(gcx);
-
-        return gcx.reserve(size);
-    }
-
-
-    /**
-     *
-     */
-    void free(void *p)
-    {
-        if (!p)
-        {
-            return;
-        }
-
-        if (!thread_needLock())
-        {
-            return freeNoSync(p);
-        }
-        else synchronized (gcLock)
-        {
-            return freeNoSync(p);
-        }
-    }
-
-
-    //
-    //
-    //
-    private void freeNoSync(void *p)
-    {
-        assert (p);
-
-        Pool*  pool;
-        size_t pagenum;
-        Bins   bin;
-        size_t bit_i;
-
-        // Find which page it is in
-        pool = gcx.findPool(p);
-        if (!pool)                              // if not one of ours
-            return;                             // ignore
-        if (opts.options.sentinel) {
-            sentinel_Invariant(p);
-            p = sentinel_sub(p);
-        }
-        pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
-        bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-        gcx.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
-
-        bin = cast(Bins)pool.pagetable[pagenum];
-        if (bin == B_PAGE)              // if large alloc
-        {
-            // Free pages
-            size_t npages = 1;
-            size_t n = pagenum;
-            while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
-                npages++;
-            if (opts.options.mem_stomp)
-                memset(p, 0xF2, npages * PAGESIZE);
-            pool.freePages(pagenum, npages);
-        }
-        else
-        {
-            // Add to free list
-            List *list = cast(List*)p;
-
-            if (opts.options.mem_stomp)
-                memset(p, 0xF2, binsize[bin]);
-
-            list.next = gcx.bucket[bin];
-            gcx.bucket[bin] = list;
-        }
-    }
-
-
-    /**
-     * Determine the base address of the block containing p.  If p is not a gc
-     * allocated pointer, return null.
-     */
-    void* addrOf(void *p)
-    {
-        if (!p)
-        {
-            return null;
-        }
-
-        if (!thread_needLock())
-        {
-            return addrOfNoSync(p);
-        }
-        else synchronized (gcLock)
-        {
-            return addrOfNoSync(p);
-        }
-    }
-
-
-    //
-    //
-    //
-    void* addrOfNoSync(void *p)
-    {
-        if (!p)
-        {
-            return null;
-        }
-
-        return gcx.findBase(p);
-    }
-
-
-    /**
-     * Determine the allocated size of pointer p.  If p is an interior pointer
-     * or not a gc allocated pointer, return 0.
-     */
-    size_t sizeOf(void *p)
-    {
-        if (!p)
-        {
-            return 0;
-        }
-
-        if (!thread_needLock())
-        {
-            return sizeOfNoSync(p);
-        }
-        else synchronized (gcLock)
-        {
-            return sizeOfNoSync(p);
-        }
-    }
-
-
-    //
-    //
-    //
-    private size_t sizeOfNoSync(void *p)
-    {
-        assert (p);
-
-        if (opts.options.sentinel)
-            p = sentinel_sub(p);
-
-        Pool* pool = gcx.findPool(p);
-        if (pool is null)
-            return 0;
-
-        auto biti = cast(size_t)(p - pool.baseAddr) / 16;
-        uint attrs = gcx.getAttr(pool, biti);
-
-        size_t size = gcx.findSize(p);
-        size_t pm_bitmask_size = 0;
-        if (has_pointermap(attrs))
-            pm_bitmask_size = size_t.sizeof;
-
-        if (opts.options.sentinel) {
-            // Check for interior pointer
-            // This depends on:
-            // 1) size is a power of 2 for less than PAGESIZE values
-            // 2) base of memory pool is aligned on PAGESIZE boundary
-            if (cast(size_t)p & (size - 1) & (PAGESIZE - 1))
-                return 0;
-            return size - SENTINEL_EXTRA - pm_bitmask_size;
-        }
-        else {
-            if (p == gcx.p_cache)
-                return gcx.size_cache;
-
-            // Check for interior pointer
-            // This depends on:
-            // 1) size is a power of 2 for less than PAGESIZE values
-            // 2) base of memory pool is aligned on PAGESIZE boundary
-            if (cast(size_t)p & (size - 1) & (PAGESIZE - 1))
-                return 0;
-
-            gcx.p_cache = p;
-            gcx.size_cache = size - pm_bitmask_size;
-
-            return gcx.size_cache;
-        }
-    }
-
-
-    /**
-     * Determine the base address of the block containing p.  If p is not a gc
-     * allocated pointer, return null.
-     */
-    BlkInfo query(void *p)
-    {
-        if (!p)
-        {
-            BlkInfo i;
-            return  i;
-        }
-
-        if (!thread_needLock())
-        {
-            return queryNoSync(p);
-        }
-        else synchronized (gcLock)
-        {
-            return queryNoSync(p);
-        }
-    }
-
-
-    //
-    //
-    //
-    BlkInfo queryNoSync(void *p)
-    {
-        assert(p);
-
-        return gcx.getInfo(p);
-    }
-
-
-    /**
-     * Verify that pointer p:
-     *  1) belongs to this memory pool
-     *  2) points to the start of an allocated piece of memory
-     *  3) is not on a free list
-     */
-    void check(void *p)
-    {
-        if (!p)
-        {
-            return;
-        }
-
-        if (!thread_needLock())
-        {
-            checkNoSync(p);
-        }
-        else synchronized (gcLock)
-        {
-            checkNoSync(p);
-        }
-    }
-
-
-    //
-    //
-    //
-    private void checkNoSync(void *p)
-    {
-        assert(p);
-
-        if (opts.options.sentinel)
-            sentinel_Invariant(p);
-        debug (PTRCHECK)
-        {
-            Pool*  pool;
-            size_t pagenum;
-            Bins   bin;
-            size_t size;
-
-            if (opts.options.sentinel)
-                p = sentinel_sub(p);
-            pool = gcx.findPool(p);
-            assert(pool);
-            pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
-            bin = cast(Bins)pool.pagetable[pagenum];
-            assert(bin <= B_PAGE);
-            size = binsize[bin];
-            assert((cast(size_t)p & (size - 1)) == 0);
-
-            debug (PTRCHECK2)
-            {
-                if (bin < B_PAGE)
-                {
-                    // Check that p is not on a free list
-                    List *list;
-
-                    for (list = gcx.bucket[bin]; list; list = list.next)
-                    {
-                        assert(cast(void*)list != p);
-                    }
-                }
-            }
-        }
-    }
-
-
-    //
-    //
-    //
-    private void setStackBottom(void *p)
-    {
-        version (STACKGROWSDOWN)
-        {
-            //p = (void *)((uint *)p + 4);
-            if (p > gcx.stackBottom)
-            {
-                gcx.stackBottom = p;
-            }
-        }
-        else
-        {
-            //p = (void *)((uint *)p - 4);
-            if (p < gcx.stackBottom)
-            {
-                gcx.stackBottom = cast(char*)p;
-            }
-        }
-    }
-
-
-    /**
-     * add p to list of roots
-     */
-    void addRoot(void *p)
-    {
-        if (!p)
-        {
-            return;
-        }
-
-        if (!thread_needLock())
-        {
-            if (roots.append(p) is null)
-                onOutOfMemoryError();
-        }
-        else synchronized (gcLock)
-        {
-            if (roots.append(p) is null)
-                onOutOfMemoryError();
-        }
-    }
-
-
-    /**
-     * remove p from list of roots
-     */
-    void removeRoot(void *p)
-    {
-        if (!p)
-        {
-            return;
-        }
-
-        bool r;
-        if (!thread_needLock())
-        {
-            r = roots.remove(p);
-        }
-        else synchronized (gcLock)
-        {
-            r = roots.remove(p);
-        }
-        assert (r);
-    }
-
-
-    /**
-     * add range to scan for roots
-     */
-    void addRange(void *p, size_t sz)
-    {
-        if (!p || !sz)
-        {
-            return;
-        }
-
-        if (!thread_needLock())
-        {
-            if (ranges.append(Range(p, p+sz)) is null)
-                onOutOfMemoryError();
-        }
-        else synchronized (gcLock)
-        {
-            if (ranges.append(Range(p, p+sz)) is null)
-                onOutOfMemoryError();
-        }
-    }
-
-
-    /**
-     * remove range
-     */
-    void removeRange(void *p)
-    {
-        if (!p)
-        {
-            return;
-        }
-
-        bool r;
-        if (!thread_needLock())
-        {
-            r = ranges.remove(Range(p, null));
-        }
-        else synchronized (gcLock)
-        {
-            r = ranges.remove(Range(p, null));
-        }
-        assert (r);
-    }
-
-
-    /**
-     * do full garbage collection
-     */
-    void fullCollect()
-    {
-
-        if (!thread_needLock())
-        {
-            gcx.fullcollectshell();
-        }
-        else synchronized (gcLock)
-        {
-            gcx.fullcollectshell();
-        }
-
-        version (none)
-        {
-            GCStats stats;
-            getStats(stats);
-        }
-
-    }
-
-
-    /**
-     * do full garbage collection ignoring roots
-     */
-    void fullCollectNoStack()
-    {
-        if (!thread_needLock())
-        {
-            gcx.noStack++;
-            gcx.fullcollectshell();
-            gcx.noStack--;
-        }
-        else synchronized (gcLock)
-        {
-            gcx.noStack++;
-            gcx.fullcollectshell();
-            gcx.noStack--;
-        }
-    }
-
-
-    /**
-     * minimize free space usage
-     */
-    void minimize()
-    {
-        if (!thread_needLock())
-        {
-            gcx.minimize();
-        }
-        else synchronized (gcLock)
-        {
-            gcx.minimize();
-        }
-    }
-
-
-    /**
-     * Retrieve statistics about garbage collection.
-     * Useful for debugging and tuning.
-     */
-    void getStats(out GCStats stats)
-    {
-        if (!thread_needLock())
-        {
-            getStatsNoSync(stats);
-        }
-        else synchronized (gcLock)
-        {
-            getStatsNoSync(stats);
-        }
-    }
-
-
-    //
-    //
-    //
-    private void getStatsNoSync(out GCStats stats)
-    {
-        size_t psize = 0;
-        size_t usize = 0;
-        size_t flsize = 0;
-
-        size_t n;
-        size_t bsize = 0;
-
-        memset(&stats, 0, GCStats.sizeof);
-
-        for (n = 0; n < pools.length; n++)
-        {
-            Pool* pool = pools[n];
-            psize += pool.npages * PAGESIZE;
-            for (size_t j = 0; j < pool.npages; j++)
-            {
-                Bins bin = cast(Bins)pool.pagetable[j];
-                if (bin == B_FREE)
-                    stats.freeblocks++;
-                else if (bin == B_PAGE)
-                    stats.pageblocks++;
-                else if (bin < B_PAGE)
-                    bsize += PAGESIZE;
-            }
-        }
-
-        for (n = 0; n < B_PAGE; n++)
-        {
-            for (List *list = gcx.bucket[n]; list; list = list.next)
-                flsize += binsize[n];
-        }
-
-        usize = bsize - flsize;
-
-        stats.poolsize = psize;
-        stats.usedsize = bsize - flsize;
-        stats.freelistsize = flsize;
-    }
-
-    /******************* weak-reference support *********************/
-
-    // call locked if necessary
-    private T locked(T)(in T delegate() code)
-    {
-        if (thread_needLock)
-            synchronized(gcLock) return code();
-        else
-           return code();
-    }
-
-    private struct WeakPointer
-    {
-        Object reference;
-
-        void ondestroy(Object r)
-        {
-            assert(r is reference);
-            // lock for memory consistency (parallel readers)
-            // also ensures that weakpointerDestroy can be called while another
-            // thread is freeing the reference with "delete"
-            locked!(void)({ reference = null; });
-        }
-    }
-
-    /**
-     * Create a weak pointer to the given object.
-     * Returns a pointer to an opaque struct allocated in C memory.
-     */
-    void* weakpointerCreate( Object r )
-    {
-        if (r)
-	{
-            // must be allocated in C memory
-            // 1. to hide the reference from the GC
-            // 2. the GC doesn't scan delegates added by rt_attachDisposeEvent
-            //    for references
-            auto wp = cast(WeakPointer*)(cstdlib.malloc(WeakPointer.sizeof));
-            if (!wp)
-                onOutOfMemoryError();
-            wp.reference = r;
-            rt_attachDisposeEvent(r, &wp.ondestroy);
-            return wp;
-        }
-        return null;
-    }
-
-    /**
-     * Destroy a weak pointer returned by weakpointerCreate().
-     * If null is passed, nothing happens.
-     */
-    void weakpointerDestroy( void* p )
-    {
-        if (p)
-	{
-            auto wp = cast(WeakPointer*)p;
-            // must be extra careful about the GC or parallel threads
-            // finalizing the reference at the same time
-            locked!(void)({
-                   if (wp.reference)
-                       rt_detachDisposeEvent(wp.reference, &wp.ondestroy);
-                  });
-            cstdlib.free(wp);
-        }
-    }
-
-    /**
-     * Query a weak pointer and return either the object passed to
-     * weakpointerCreate, or null if it was free'd in the meantime.
-     * If null is passed, null is returned.
-     */
-    Object weakpointerGet( void* p )
-    {
-        if (p)
-	{
-            // NOTE: could avoid the lock by using Fawzi style GC counters but
-            // that'd require core.sync.Atomic and lots of care about memory
-            // consistency it's an optional optimization see
-            // http://dsource.org/projects/tango/browser/trunk/user/tango/core/Lifetime.d?rev=5100#L158
-            return locked!(Object)({
-                  return (cast(WeakPointer*)p).reference;
-                  });
-            }
-    }
-}
-
-
-/* ============================ Gcx =============================== */
-
 enum
 {
     PAGESIZE =    4096,
@@ -1417,18 +180,16 @@ const uint binsize[B_MAX] = [ 16,32,64,128,256,512,1024,2048,4096 ];
 const uint notbinsize[B_MAX] = [ ~(16u-1),~(32u-1),~(64u-1),~(128u-1),~(256u-1),
                                 ~(512u-1),~(1024u-1),~(2048u-1),~(4096u-1) ];
 
-DynArray!(void*) roots;
 
-DynArray!(Range) ranges;
-
-DynArray!(Pool) pools;
+/* ============================ GC =============================== */
 
 
-/* ============================ Gcx =============================== */
+class GCLock { }                // just a dummy so we can get a global lock
 
 
-struct Gcx
+struct GC
 {
+    static ClassInfo gcLock;    // global lock
 
     void *p_cache;
     size_t size_cache;
@@ -1444,18 +205,11 @@ struct Gcx
 
     List *bucket[B_MAX];        // free list for each size
 
+    dynarray.DynArray!(void*) roots;
+    dynarray.DynArray!(Range) ranges;
+    dynarray.DynArray!(Pool) pools;
 
-    void initialize()
-    {
-        int dummy;
-        (cast(byte*)this)[0 .. Gcx.sizeof] = 0;
-        stackBottom = cast(char*)&dummy;
-        //printf("gcx = %p, self = %x\n", this, self);
-        inited = 1;
-    }
-
-
-    void Invariant() { }
+    Stats stats;
 
 
     invariant
@@ -1727,8 +481,9 @@ struct Gcx
      * Mark all memory in the pool as B_FREE.
      * Return the actual number of bytes reserved or 0 on error.
      */
-    size_t reserve(size_t size)
+    size_t reserveNoSync(size_t size)
     {
+        assert(size != 0);
         size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
         Pool*  pool = newPool(npages);
 
@@ -1741,7 +496,7 @@ struct Gcx
     /**
      * Minimizes physical memory usage by returning free pools to the OS.
      */
-    void minimize()
+    void minimizeNoSync()
     {
         size_t n;
         size_t pn;
@@ -2298,7 +1053,7 @@ struct Gcx
                                 else
                                     rt_finalize(cast(List *)p, false/*noStack > 0*/);
                             }
-                            gcx.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
+                            this.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
 
                             List *list = cast(List *)p;
 
@@ -2502,6 +1257,1208 @@ struct Gcx
 //            pool.nomove.clear(bit_i);
     }
 
+
+
+    void initialize()
+    {
+        int dummy;
+        stackBottom = cast(char*)&dummy;
+        opts.parse(cstdlib.getenv("D_GC_OPTS"));
+        gcLock = GCLock.classinfo;
+        inited = 1;
+        setStackBottom(rt_stackBottom());
+        stats = Stats(this);
+    }
+
+
+    /**
+     *
+     */
+    void enable()
+    {
+        if (!thread_needLock())
+        {
+            assert(this.disabled > 0);
+            this.disabled--;
+        }
+        else synchronized (gcLock)
+        {
+            assert(this.disabled > 0);
+            this.disabled--;
+        }
+    }
+
+
+    /**
+     *
+     */
+    void disable()
+    {
+        if (!thread_needLock())
+        {
+            this.disabled++;
+        }
+        else synchronized (gcLock)
+        {
+            this.disabled++;
+        }
+    }
+
+
+    /**
+     *
+     */
+    uint getAttr(void* p)
+    {
+        if (!p)
+        {
+            return 0;
+        }
+
+        uint go()
+        {
+            Pool* pool = this.findPool(p);
+            uint  old_attrs = 0;
+
+            if (pool)
+            {
+                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+
+                old_attrs = this.getAttr(pool, bit_i);
+            }
+            return old_attrs;
+        }
+
+        if (!thread_needLock())
+        {
+            return go();
+        }
+        else synchronized (gcLock)
+        {
+            return go();
+        }
+    }
+
+
+    /**
+     *
+     */
+    uint setAttr(void* p, uint mask)
+    {
+        if (!p)
+        {
+            return 0;
+        }
+
+        uint go()
+        {
+            Pool* pool = this.findPool(p);
+            uint  old_attrs = 0;
+
+            if (pool)
+            {
+                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+
+                old_attrs = this.getAttr(pool, bit_i);
+                this.setAttr(pool, bit_i, mask);
+            }
+            return old_attrs;
+        }
+
+        if (!thread_needLock())
+        {
+            return go();
+        }
+        else synchronized (gcLock)
+        {
+            return go();
+        }
+    }
+
+
+    /**
+     *
+     */
+    uint clrAttr(void* p, uint mask)
+    {
+        if (!p)
+        {
+            return 0;
+        }
+
+        uint go()
+        {
+            Pool* pool = this.findPool(p);
+            uint  old_attrs = 0;
+
+            if (pool)
+            {
+                auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+
+                old_attrs = this.getAttr(pool, bit_i);
+                this.clrAttr(pool, bit_i, mask);
+            }
+            return old_attrs;
+        }
+
+        if (!thread_needLock())
+        {
+            return go();
+        }
+        else synchronized (gcLock)
+        {
+            return go();
+        }
+    }
+
+
+    /**
+     *
+     */
+    void *malloc(size_t size, uint attrs, PointerMap ptrmap)
+    {
+        if (!size)
+        {
+            return null;
+        }
+
+        if (!thread_needLock())
+        {
+            return mallocNoSync(size, attrs, ptrmap.bits.ptr);
+        }
+        else synchronized (gcLock)
+        {
+            return mallocNoSync(size, attrs, ptrmap.bits.ptr);
+        }
+    }
+
+
+    //
+    //
+    //
+    private void *mallocNoSync(size_t size, uint attrs, size_t* pm_bitmask)
+    {
+        assert(size != 0);
+
+        stats.malloc_started(size, attrs, pm_bitmask);
+        scope (exit)
+            stats.malloc_finished(p);
+
+        void *p = null;
+        Bins bin;
+
+        if (opts.options.sentinel)
+            size += SENTINEL_EXTRA;
+
+        bool has_pm = has_pointermap(attrs);
+        if (has_pm)
+            size += size_t.sizeof;
+
+        // Compute size bin
+        // Cache previous binsize lookup - Dave Fladebo.
+        static size_t lastsize = -1;
+        static Bins lastbin;
+        if (size == lastsize)
+            bin = lastbin;
+        else
+        {
+            bin = this.findBin(size);
+            lastsize = size;
+            lastbin = bin;
+        }
+
+        size_t capacity; // to figure out where to store the bitmask
+        if (bin < B_PAGE)
+        {
+            p = this.bucket[bin];
+            if (p is null)
+            {
+                if (!this.allocPage(bin) && !this.disabled)   // try to find a new page
+                {
+                    if (!thread_needLock())
+                    {
+                        /* Then we haven't locked it yet. Be sure
+                         * and lock for a collection, since a finalizer
+                         * may start a new thread.
+                         */
+                        synchronized (gcLock)
+                        {
+                            this.fullcollectshell();
+                        }
+                    }
+                    else if (!this.fullcollectshell())       // collect to find a new page
+                    {
+                        //this.newPool(1);
+                    }
+                }
+                if (!this.bucket[bin] && !this.allocPage(bin))
+                {
+                    this.newPool(1);         // allocate new pool to find a new page
+                    int result = this.allocPage(bin);
+                    if (!result)
+                        onOutOfMemoryError();
+                }
+                p = this.bucket[bin];
+            }
+            capacity = binsize[bin];
+
+            // Return next item from free list
+            this.bucket[bin] = (cast(List*)p).next;
+            if (!(attrs & BlkAttr.NO_SCAN))
+                memset(p + size, 0, capacity - size);
+            if (opts.options.mem_stomp)
+                memset(p, 0xF0, size);
+        }
+        else
+        {
+            p = this.bigAlloc(size);
+            if (!p)
+                onOutOfMemoryError();
+            // Round the size up to the number of pages needed to store it
+            size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
+            capacity = npages * PAGESIZE;
+        }
+
+        // Store the bit mask AFTER SENTINEL_POST
+        // TODO: store it BEFORE, so the bitmask is protected too
+        if (has_pm) {
+            auto end_of_blk = cast(size_t**)(p + capacity - size_t.sizeof);
+            *end_of_blk = pm_bitmask;
+            size -= size_t.sizeof;
+        }
+
+        if (opts.options.sentinel) {
+            size -= SENTINEL_EXTRA;
+            p = sentinel_add(p);
+            sentinel_init(p, size);
+        }
+
+        if (attrs)
+        {
+            Pool *pool = this.findPool(p);
+            assert(pool);
+
+            this.setAttr(pool, cast(size_t)(p - pool.baseAddr) / 16, attrs);
+        }
+        return p;
+    }
+
+
+    /**
+     *
+     */
+    void *calloc(size_t size, uint attrs, PointerMap ptrmap)
+    {
+        if (!size)
+        {
+            return null;
+        }
+
+        if (!thread_needLock())
+        {
+            return callocNoSync(size, attrs, ptrmap.bits.ptr);
+        }
+        else synchronized (gcLock)
+        {
+            return callocNoSync(size, attrs, ptrmap.bits.ptr);
+        }
+    }
+
+
+    //
+    //
+    //
+    private void *callocNoSync(size_t size, uint attrs, size_t* pm_bitmask)
+    {
+        assert(size != 0);
+
+        void *p = mallocNoSync(size, attrs, pm_bitmask);
+        memset(p, 0, size);
+        return p;
+    }
+
+
+    /**
+     *
+     */
+    void *realloc(void *p, size_t size, uint attrs, PointerMap ptrmap)
+    {
+        if (!thread_needLock())
+        {
+            return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
+        }
+        else synchronized (gcLock)
+        {
+            return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
+        }
+    }
+
+
+    //
+    //
+    //
+    private void *reallocNoSync(void *p, size_t size, uint attrs,
+            size_t* pm_bitmask)
+    {
+        if (!size)
+        {
+            if (p)
+            {
+                freeNoSync(p);
+                p = null;
+            }
+        }
+        else if (!p)
+        {
+            p = mallocNoSync(size, attrs, pm_bitmask);
+        }
+        else
+        {
+            Pool* pool = this.findPool(p);
+            if (pool is null)
+                return null;
+
+            // Set or retrieve attributes as appropriate
+            auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+            if (attrs) {
+                this.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
+                this.setAttr(pool, bit_i, attrs);
+            }
+            else
+                attrs = this.getAttr(pool, bit_i);
+
+            void* blk_base_addr = this.findBase(p);
+            size_t blk_size = this.findSize(p);
+            bool has_pm = has_pointermap(attrs);
+            size_t pm_bitmask_size = 0;
+            if (has_pm) {
+                pm_bitmask_size = size_t.sizeof;
+                // Retrieve pointer map bit mask if appropriate
+                if (pm_bitmask is null) {
+                    auto end_of_blk = cast(size_t**)(blk_base_addr +
+                            blk_size - size_t.sizeof);
+                    pm_bitmask = *end_of_blk;
+                }
+            }
+
+            if (opts.options.sentinel)
+            {
+                sentinel_Invariant(p);
+                size_t sentinel_stored_size = *sentinel_size(p);
+                if (sentinel_stored_size != size)
+                {
+                    void* p2 = mallocNoSync(size, attrs, pm_bitmask);
+                    if (sentinel_stored_size < size)
+                        size = sentinel_stored_size;
+                    cstring.memcpy(p2, p, size);
+                    p = p2;
+                }
+            }
+            else
+            {
+                size += pm_bitmask_size;
+                if (blk_size >= PAGESIZE && size >= PAGESIZE)
+                {
+                    auto psz = blk_size / PAGESIZE;
+                    auto newsz = (size + PAGESIZE - 1) / PAGESIZE;
+                    if (newsz == psz)
+                        return p;
+
+                    auto pagenum = (p - pool.baseAddr) / PAGESIZE;
+
+                    if (newsz < psz)
+                    {
+                        // Shrink in place
+                        synchronized (gcLock)
+                        {
+                            if (opts.options.mem_stomp)
+                                memset(p + size - pm_bitmask_size, 0xF2,
+                                        blk_size - size - pm_bitmask_size);
+                            pool.freePages(pagenum + newsz, psz - newsz);
+                        }
+                        if (has_pm) {
+                            auto end_of_blk = cast(size_t**)(
+                                    blk_base_addr + (PAGESIZE * newsz) -
+                                    pm_bitmask_size);
+                            *end_of_blk = pm_bitmask;
+                        }
+                        return p;
+                    }
+                    else if (pagenum + newsz <= pool.npages)
+                    {
+                        // Attempt to expand in place
+                        synchronized (gcLock)
+                        {
+                            for (size_t i = pagenum + psz; 1;)
+                            {
+                                if (i == pagenum + newsz)
+                                {
+                                    if (opts.options.mem_stomp)
+                                        memset(p + blk_size - pm_bitmask_size,
+                                                0xF0, size - blk_size
+                                                - pm_bitmask_size);
+                                    memset(pool.pagetable + pagenum +
+                                            psz, B_PAGEPLUS, newsz - psz);
+                                    if (has_pm) {
+                                        auto end_of_blk = cast(size_t**)(
+                                                blk_base_addr +
+                                                (PAGESIZE * newsz) -
+                                                pm_bitmask_size);
+                                        *end_of_blk = pm_bitmask;
+                                    }
+                                    return p;
+                                }
+                                if (i == pool.npages)
+                                {
+                                    break;
+                                }
+                                if (pool.pagetable[i] != B_FREE)
+                                    break;
+                                i++;
+                            }
+                        }
+                    }
+                }
+                // if new size is bigger or less than half
+                if (blk_size < size || blk_size > size * 2)
+                {
+                    size -= pm_bitmask_size;
+                    blk_size -= pm_bitmask_size;
+                    void* p2 = mallocNoSync(size, attrs, pm_bitmask);
+                    if (blk_size < size)
+                        size = blk_size;
+                    cstring.memcpy(p2, p, size);
+                    p = p2;
+                }
+            }
+        }
+        return p;
+    }
+
+
+    /**
+     * Attempt to in-place enlarge the memory block pointed to by p by at least
+     * minbytes beyond its current capacity, up to a maximum of maxsize.  This
+     * does not attempt to move the memory block (like realloc() does).
+     *
+     * Returns:
+     *  0 if could not extend p,
+     *  total size of entire memory block if successful.
+     */
+    size_t extend(void* p, size_t minsize, size_t maxsize)
+    {
+        if (!thread_needLock())
+        {
+            return extendNoSync(p, minsize, maxsize);
+        }
+        else synchronized (gcLock)
+        {
+            return extendNoSync(p, minsize, maxsize);
+        }
+    }
+
+
+    //
+    //
+    //
+    private size_t extendNoSync(void* p, size_t minsize, size_t maxsize)
+    in
+    {
+        assert( minsize <= maxsize );
+    }
+    body
+    {
+        if (opts.options.sentinel)
+            return 0;
+
+        Pool* pool = this.findPool(p);
+        if (pool is null)
+            return 0;
+
+        // Retrieve attributes
+        auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+        uint attrs = this.getAttr(pool, bit_i);
+
+        void* blk_base_addr = this.findBase(p);
+        size_t blk_size = this.findSize(p);
+        bool has_pm = has_pointermap(attrs);
+        size_t* pm_bitmask = null;
+        size_t pm_bitmask_size = 0;
+        if (has_pm) {
+            pm_bitmask_size = size_t.sizeof;
+            // Retrieve pointer map bit mask
+            auto end_of_blk = cast(size_t**)(blk_base_addr +
+                    blk_size - size_t.sizeof);
+            pm_bitmask = *end_of_blk;
+
+            minsize += size_t.sizeof;
+            maxsize += size_t.sizeof;
+        }
+
+        if (blk_size < PAGESIZE)
+            return 0; // cannot extend buckets
+
+        auto psz = blk_size / PAGESIZE;
+        auto minsz = (minsize + PAGESIZE - 1) / PAGESIZE;
+        auto maxsz = (maxsize + PAGESIZE - 1) / PAGESIZE;
+
+        auto pagenum = (p - pool.baseAddr) / PAGESIZE;
+
+        size_t sz;
+        for (sz = 0; sz < maxsz; sz++)
+        {
+            auto i = pagenum + psz + sz;
+            if (i == pool.npages)
+                break;
+            if (pool.pagetable[i] != B_FREE)
+            {
+                if (sz < minsz)
+                    return 0;
+                break;
+            }
+        }
+        if (sz < minsz)
+            return 0;
+
+        size_t new_size = (psz + sz) * PAGESIZE;
+
+        if (opts.options.mem_stomp)
+            memset(p + blk_size - pm_bitmask_size, 0xF0,
+                    new_size - blk_size - pm_bitmask_size);
+        memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
+        this.p_cache = null;
+        this.size_cache = 0;
+
+        if (has_pm) {
+            new_size -= size_t.sizeof;
+            auto end_of_blk = cast(size_t**)(blk_base_addr + new_size);
+            *end_of_blk = pm_bitmask;
+        }
+        return new_size;
+    }
+
+
+    /**
+     *
+     */
+    size_t reserve(size_t size)
+    {
+        if (!size)
+        {
+            return 0;
+        }
+
+        if (!thread_needLock())
+        {
+            return reserveNoSync(size);
+        }
+        else synchronized (gcLock)
+        {
+            return reserveNoSync(size);
+        }
+    }
+
+
+    /**
+     *
+     */
+    void free(void *p)
+    {
+        if (!p)
+        {
+            return;
+        }
+
+        if (!thread_needLock())
+        {
+            return freeNoSync(p);
+        }
+        else synchronized (gcLock)
+        {
+            return freeNoSync(p);
+        }
+    }
+
+
+    //
+    //
+    //
+    private void freeNoSync(void *p)
+    {
+        assert (p);
+
+        Pool*  pool;
+        size_t pagenum;
+        Bins   bin;
+        size_t bit_i;
+
+        // Find which page it is in
+        pool = this.findPool(p);
+        if (!pool)                              // if not one of ours
+            return;                             // ignore
+        if (opts.options.sentinel) {
+            sentinel_Invariant(p);
+            p = sentinel_sub(p);
+        }
+        pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
+        bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+        this.clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
+
+        bin = cast(Bins)pool.pagetable[pagenum];
+        if (bin == B_PAGE)              // if large alloc
+        {
+            // Free pages
+            size_t npages = 1;
+            size_t n = pagenum;
+            while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
+                npages++;
+            if (opts.options.mem_stomp)
+                memset(p, 0xF2, npages * PAGESIZE);
+            pool.freePages(pagenum, npages);
+        }
+        else
+        {
+            // Add to free list
+            List *list = cast(List*)p;
+
+            if (opts.options.mem_stomp)
+                memset(p, 0xF2, binsize[bin]);
+
+            list.next = this.bucket[bin];
+            this.bucket[bin] = list;
+        }
+    }
+
+
+    /**
+     * Determine the base address of the block containing p.  If p is not a gc
+     * allocated pointer, return null.
+     */
+    void* addrOf(void *p)
+    {
+        if (!p)
+        {
+            return null;
+        }
+
+        if (!thread_needLock())
+        {
+            return addrOfNoSync(p);
+        }
+        else synchronized (gcLock)
+        {
+            return addrOfNoSync(p);
+        }
+    }
+
+
+    //
+    //
+    //
+    void* addrOfNoSync(void *p)
+    {
+        if (!p)
+        {
+            return null;
+        }
+
+        return this.findBase(p);
+    }
+
+
+    /**
+     * Determine the allocated size of pointer p.  If p is an interior pointer
+     * or not a gc allocated pointer, return 0.
+     */
+    size_t sizeOf(void *p)
+    {
+        if (!p)
+        {
+            return 0;
+        }
+
+        if (!thread_needLock())
+        {
+            return sizeOfNoSync(p);
+        }
+        else synchronized (gcLock)
+        {
+            return sizeOfNoSync(p);
+        }
+    }
+
+
+    //
+    //
+    //
+    private size_t sizeOfNoSync(void *p)
+    {
+        assert (p);
+
+        if (opts.options.sentinel)
+            p = sentinel_sub(p);
+
+        Pool* pool = this.findPool(p);
+        if (pool is null)
+            return 0;
+
+        auto biti = cast(size_t)(p - pool.baseAddr) / 16;
+        uint attrs = this.getAttr(pool, biti);
+
+        size_t size = this.findSize(p);
+        size_t pm_bitmask_size = 0;
+        if (has_pointermap(attrs))
+            pm_bitmask_size = size_t.sizeof;
+
+        if (opts.options.sentinel) {
+            // Check for interior pointer
+            // This depends on:
+            // 1) size is a power of 2 for less than PAGESIZE values
+            // 2) base of memory pool is aligned on PAGESIZE boundary
+            if (cast(size_t)p & (size - 1) & (PAGESIZE - 1))
+                return 0;
+            return size - SENTINEL_EXTRA - pm_bitmask_size;
+        }
+        else {
+            if (p == this.p_cache)
+                return this.size_cache;
+
+            // Check for interior pointer
+            // This depends on:
+            // 1) size is a power of 2 for less than PAGESIZE values
+            // 2) base of memory pool is aligned on PAGESIZE boundary
+            if (cast(size_t)p & (size - 1) & (PAGESIZE - 1))
+                return 0;
+
+            this.p_cache = p;
+            this.size_cache = size - pm_bitmask_size;
+
+            return this.size_cache;
+        }
+    }
+
+
+    /**
+     * Determine the base address of the block containing p.  If p is not a gc
+     * allocated pointer, return null.
+     */
+    BlkInfo query(void *p)
+    {
+        if (!p)
+        {
+            BlkInfo i;
+            return  i;
+        }
+
+        if (!thread_needLock())
+        {
+            return queryNoSync(p);
+        }
+        else synchronized (gcLock)
+        {
+            return queryNoSync(p);
+        }
+    }
+
+
+    //
+    //
+    //
+    BlkInfo queryNoSync(void *p)
+    {
+        assert(p);
+
+        return this.getInfo(p);
+    }
+
+
+    /**
+     * Verify that pointer p:
+     *  1) belongs to this memory pool
+     *  2) points to the start of an allocated piece of memory
+     *  3) is not on a free list
+     */
+    void check(void *p)
+    {
+        if (!p)
+        {
+            return;
+        }
+
+        if (!thread_needLock())
+        {
+            checkNoSync(p);
+        }
+        else synchronized (gcLock)
+        {
+            checkNoSync(p);
+        }
+    }
+
+
+    //
+    //
+    //
+    private void checkNoSync(void *p)
+    {
+        assert(p);
+
+        if (opts.options.sentinel)
+            sentinel_Invariant(p);
+        debug (PTRCHECK)
+        {
+            Pool*  pool;
+            size_t pagenum;
+            Bins   bin;
+            size_t size;
+
+            if (opts.options.sentinel)
+                p = sentinel_sub(p);
+            pool = this.findPool(p);
+            assert(pool);
+            pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
+            bin = cast(Bins)pool.pagetable[pagenum];
+            assert(bin <= B_PAGE);
+            size = binsize[bin];
+            assert((cast(size_t)p & (size - 1)) == 0);
+
+            debug (PTRCHECK2)
+            {
+                if (bin < B_PAGE)
+                {
+                    // Check that p is not on a free list
+                    List *list;
+
+                    for (list = this.bucket[bin]; list; list = list.next)
+                    {
+                        assert(cast(void*)list != p);
+                    }
+                }
+            }
+        }
+    }
+
+
+    //
+    //
+    //
+    private void setStackBottom(void *p)
+    {
+        version (STACKGROWSDOWN)
+        {
+            //p = (void *)((uint *)p + 4);
+            if (p > this.stackBottom)
+            {
+                this.stackBottom = p;
+            }
+        }
+        else
+        {
+            //p = (void *)((uint *)p - 4);
+            if (p < this.stackBottom)
+            {
+                this.stackBottom = cast(char*)p;
+            }
+        }
+    }
+
+
+    /**
+     * add p to list of roots
+     */
+    void addRoot(void *p)
+    {
+        if (!p)
+        {
+            return;
+        }
+
+        if (!thread_needLock())
+        {
+            if (roots.append(p) is null)
+                onOutOfMemoryError();
+        }
+        else synchronized (gcLock)
+        {
+            if (roots.append(p) is null)
+                onOutOfMemoryError();
+        }
+    }
+
+
+    /**
+     * remove p from list of roots
+     */
+    void removeRoot(void *p)
+    {
+        if (!p)
+        {
+            return;
+        }
+
+        bool r;
+        if (!thread_needLock())
+        {
+            r = roots.remove(p);
+        }
+        else synchronized (gcLock)
+        {
+            r = roots.remove(p);
+        }
+        assert (r);
+    }
+
+
+    /**
+     * add range to scan for roots
+     */
+    void addRange(void *p, size_t sz)
+    {
+        if (!p || !sz)
+        {
+            return;
+        }
+
+        if (!thread_needLock())
+        {
+            if (ranges.append(Range(p, p+sz)) is null)
+                onOutOfMemoryError();
+        }
+        else synchronized (gcLock)
+        {
+            if (ranges.append(Range(p, p+sz)) is null)
+                onOutOfMemoryError();
+        }
+    }
+
+
+    /**
+     * remove range
+     */
+    void removeRange(void *p)
+    {
+        if (!p)
+        {
+            return;
+        }
+
+        bool r;
+        if (!thread_needLock())
+        {
+            r = ranges.remove(Range(p, null));
+        }
+        else synchronized (gcLock)
+        {
+            r = ranges.remove(Range(p, null));
+        }
+        assert (r);
+    }
+
+
+    /**
+     * do full garbage collection
+     */
+    void fullCollect()
+    {
+
+        if (!thread_needLock())
+        {
+            this.fullcollectshell();
+        }
+        else synchronized (gcLock)
+        {
+            this.fullcollectshell();
+        }
+
+        version (none)
+        {
+            GCStats stats;
+            getStats(stats);
+        }
+
+    }
+
+
+    /**
+     * do full garbage collection ignoring roots
+     */
+    void fullCollectNoStack()
+    {
+        if (!thread_needLock())
+        {
+            this.noStack++;
+            this.fullcollectshell();
+            this.noStack--;
+        }
+        else synchronized (gcLock)
+        {
+            this.noStack++;
+            this.fullcollectshell();
+            this.noStack--;
+        }
+    }
+
+
+    /**
+     * minimize free space usage
+     */
+    void minimize()
+    {
+        if (!thread_needLock())
+        {
+            this.minimizeNoSync();
+        }
+        else synchronized (gcLock)
+        {
+            this.minimizeNoSync();
+        }
+    }
+
+
+    /**
+     * Retrieve statistics about garbage collection.
+     * Useful for debugging and tuning.
+     */
+    void getStats(out GCStats stats)
+    {
+        if (!thread_needLock())
+        {
+            getStatsNoSync(stats);
+        }
+        else synchronized (gcLock)
+        {
+            getStatsNoSync(stats);
+        }
+    }
+
+
+    //
+    //
+    //
+    private void getStatsNoSync(out GCStats stats)
+    {
+        size_t psize = 0;
+        size_t usize = 0;
+        size_t flsize = 0;
+
+        size_t n;
+        size_t bsize = 0;
+
+        memset(&stats, 0, GCStats.sizeof);
+
+        for (n = 0; n < pools.length; n++)
+        {
+            Pool* pool = pools[n];
+            psize += pool.npages * PAGESIZE;
+            for (size_t j = 0; j < pool.npages; j++)
+            {
+                Bins bin = cast(Bins)pool.pagetable[j];
+                if (bin == B_FREE)
+                    stats.freeblocks++;
+                else if (bin == B_PAGE)
+                    stats.pageblocks++;
+                else if (bin < B_PAGE)
+                    bsize += PAGESIZE;
+            }
+        }
+
+        for (n = 0; n < B_PAGE; n++)
+        {
+            for (List *list = this.bucket[n]; list; list = list.next)
+                flsize += binsize[n];
+        }
+
+        usize = bsize - flsize;
+
+        stats.poolsize = psize;
+        stats.usedsize = bsize - flsize;
+        stats.freelistsize = flsize;
+    }
+
+    /******************* weak-reference support *********************/
+
+    // call locked if necessary
+    private T locked(T)(in T delegate() code)
+    {
+        if (thread_needLock)
+            synchronized(gcLock) return code();
+        else
+           return code();
+    }
+
+    private struct WeakPointer
+    {
+        Object reference;
+
+        void ondestroy(Object r)
+        {
+            assert(r is reference);
+            // lock for memory consistency (parallel readers)
+            // also ensures that weakpointerDestroy can be called while another
+            // thread is freeing the reference with "delete"
+            locked!(void)({ reference = null; });
+        }
+    }
+
+    /**
+     * Create a weak pointer to the given object.
+     * Returns a pointer to an opaque struct allocated in C memory.
+     */
+    void* weakpointerCreate( Object r )
+    {
+        if (r)
+	{
+            // must be allocated in C memory
+            // 1. to hide the reference from the GC
+            // 2. the GC doesn't scan delegates added by rt_attachDisposeEvent
+            //    for references
+            auto wp = cast(WeakPointer*)(cstdlib.malloc(WeakPointer.sizeof));
+            if (!wp)
+                onOutOfMemoryError();
+            wp.reference = r;
+            rt_attachDisposeEvent(r, &wp.ondestroy);
+            return wp;
+        }
+        return null;
+    }
+
+    /**
+     * Destroy a weak pointer returned by weakpointerCreate().
+     * If null is passed, nothing happens.
+     */
+    void weakpointerDestroy( void* p )
+    {
+        if (p)
+	{
+            auto wp = cast(WeakPointer*)p;
+            // must be extra careful about the GC or parallel threads
+            // finalizing the reference at the same time
+            locked!(void)({
+                   if (wp.reference)
+                       rt_detachDisposeEvent(wp.reference, &wp.ondestroy);
+                  });
+            cstdlib.free(wp);
+        }
+    }
+
+    /**
+     * Query a weak pointer and return either the object passed to
+     * weakpointerCreate, or null if it was free'd in the meantime.
+     * If null is passed, null is returned.
+     */
+    Object weakpointerGet( void* p )
+    {
+        if (p)
+	{
+            // NOTE: could avoid the lock by using Fawzi style GC counters but
+            // that'd require core.sync.Atomic and lots of care about memory
+            // consistency it's an optional optimization see
+            // http://dsource.org/projects/tango/browser/trunk/user/tango/core/Lifetime.d?rev=5100#L158
+            return locked!(Object)({
+                  return (cast(WeakPointer*)p).reference;
+                  });
+            }
+    }
 }
 
 

@@ -31,14 +31,8 @@ import rt.gc.cdgc.stats: GCStats;
 
 import cstdlib = tango.stdc.stdlib;
 
-version=GCCLASS;
 
-version (GCCLASS)
-    alias GC gc_t;
-else
-    alias GC* gc_t;
-
-gc_t _gc;
+private GC* _gc;
 
 private int _termCleanupLevel=1;
 
@@ -64,17 +58,7 @@ extern (C) void thread_init();
 
 extern (C) void gc_init()
 {
-    version (GCCLASS)
-    {
-        ClassInfo ci = GC.classinfo;
-        void* p = cstdlib.malloc(ci.init.length);
-        (cast(byte*)p)[0 .. ci.init.length] = ci.init[];
-        _gc = cast(GC)p;
-    }
-    else
-    {
-        _gc = cast(GC*) cstdlib.calloc(1, GC.sizeof);
-    }
+    _gc = cast(GC*) cstdlib.calloc(1, GC.sizeof);
     _gc.initialize();
     version (DigitalMars) version(OSX) {
         _d_osx_image_init();

@@ -80,11 +80,11 @@ public:
     }
 
     /**
-     * Get the total ammount of bytes the array consumes.
+     * Get the total ammount of bytes the elements consumes (capacity included).
      */
-    size_t size_of()
+    size_t elements_sizeof()
     {
-        return this.sizeof + this._capacity * (T.sizeof + (T*).sizeof);
+        return this._capacity * (T.sizeof + (T*).sizeof);
     }
 
     /**

@@ -157,7 +157,7 @@ struct Stats
 private:
 
     /// The GC instance we are collecting stats from.
-    .gc.GC gc = null;
+    .gc.GC* gc = null;
 
     /// True if statistics should be collected.
     bool active = false;
@@ -188,13 +188,13 @@ private:
     /// Fill a MemoryInfo struct with the current state of the GC heap.
     void fill_memory_info(MemoryInfo* mem_info)
     {
-        mem_info.overhead += .gc.GC.classinfo.init.length + .gc.Gcx.sizeof
-                + .gc.pools.size_of + .gc.roots.size_of + .gc.ranges.size_of;
+        mem_info.overhead += .gc.GC.sizeof + gc.pools.elements_sizeof +
+                gc.roots.elements_sizeof + gc.ranges.elements_sizeof;
 
         // pools
-        for (size_t i = 0; i < .gc.pools.length; i++)
+        for (size_t i = 0; i < gc.pools.length; i++)
         {
-            auto pool = .gc.pools[i];
+            auto pool = gc.pools[i];
             mem_info.overhead += pool.npages * ubyte.sizeof;
             // the 5 bitmaps (mark, scan, free, final, noscan)
             mem_info.overhead += 5 * (GCBits.sizeof
@@ -293,7 +293,7 @@ public:
      * the program start time (in seconds since the epoch) needs to be taken to
      * properly add timestamps to allocations and collections.
      */
-    static Stats opCall(.gc.GC gc)
+    static Stats opCall(.gc.GC* gc)
     {
         Stats this_;
         this_.gc = gc;
