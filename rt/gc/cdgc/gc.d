@@ -99,32 +99,29 @@ package bool has_pointermap(uint attrs)
 
 private
 {
-
-    extern (C) void* rt_stackBottom();
-    extern (C) void* rt_stackTop();
-
-    extern (C) void rt_finalize( void* p, bool det = true );
-
     alias void delegate(Object) DEvent;
-    extern (C) void rt_attachDisposeEvent(Object h, DEvent e);
-    extern (C) bool rt_detachDisposeEvent(Object h, DEvent e);
-
-
     alias void delegate( void*, void* ) scanFn;
+    enum { OPFAIL = ~cast(size_t)0 }
 
-    extern (C) void rt_scanStaticData( scanFn scan );
-
-    extern (C) bool thread_needLock();
-    extern (C) void thread_suspendAll();
-    extern (C) void thread_resumeAll();
-
-    extern (C) void thread_scanAll( scanFn fn, void* curStackTop = null );
-
-    extern (C) void onOutOfMemoryError();
-
-    enum
+    extern (C)
     {
-        OPFAIL = ~cast(size_t)0
+        version (DigitalMars) version(OSX)
+            oid _d_osx_image_init();
+
+        void* rt_stackBottom();
+        void* rt_stackTop();
+        void rt_finalize( void* p, bool det = true );
+        void rt_attachDisposeEvent(Object h, DEvent e);
+        bool rt_detachDisposeEvent(Object h, DEvent e);
+        void rt_scanStaticData( scanFn scan );
+
+        void thread_init();
+        bool thread_needLock();
+        void thread_suspendAll();
+        void thread_resumeAll();
+        void thread_scanAll( scanFn fn, void* curStackTop = null );
+
+        void onOutOfMemoryError();
     }
 }
 
@@ -2125,29 +2122,27 @@ void *sentinel_sub(void *p)
 
 private int _termCleanupLevel=1;
 
+extern (C):
+
 /// sets the cleanup level done by gc
 /// 0: none
 /// 1: fullCollect
 /// 2: fullCollect ignoring stack roots (might crash daemonThreads)
 /// result !=0 if the value was invalid
-extern (C) int gc_setTermCleanupLevel(int cLevel){
+int gc_setTermCleanupLevel(int cLevel)
+{
     if (cLevel<0 || cLevel>2) return cLevel;
     _termCleanupLevel=cLevel;
     return 0;
 }
 
 /// returns the cleanup level done by gc
-extern (C) int gc_getTermCleanupLevel(){
+int gc_getTermCleanupLevel()
+{
     return _termCleanupLevel;
 }
 
-version (DigitalMars) version(OSX) {
-    extern(C) void _d_osx_image_init();
-}
-
-extern (C) void thread_init();
-
-extern (C) void gc_init()
+void gc_init()
 {
     scope (exit) assert (Invariant());
     gc = cast(GC*) cstdlib.calloc(1, GC.sizeof);
@@ -2161,7 +2156,7 @@ extern (C) void gc_init()
     thread_init();
 }
 
-extern (C) void gc_term()
+void gc_term()
 {
     assert (Invariant());
     if (_termCleanupLevel<1) {
@@ -2193,7 +2188,7 @@ extern (C) void gc_term()
     }
 }
 
-extern (C) void gc_enable()
+void gc_enable()
 {
     return locked!(void, () {
         assert (Invariant()); scope (exit) assert (Invariant());
@@ -2202,7 +2197,7 @@ extern (C) void gc_enable()
     })();
 }
 
-extern (C) void gc_disable()
+void gc_disable()
 {
     return locked!(void, () {
         assert (Invariant()); scope (exit) assert (Invariant());
@@ -2210,7 +2205,7 @@ extern (C) void gc_disable()
     })();
 }
 
-extern (C) void gc_collect()
+void gc_collect()
 {
     return locked!(void, () {
         assert (Invariant()); scope (exit) assert (Invariant());
@@ -2219,7 +2214,7 @@ extern (C) void gc_collect()
 }
 
 
-extern (C) void gc_minimize()
+void gc_minimize()
 {
     return locked!(void, () {
         assert (Invariant()); scope (exit) assert (Invariant());
@@ -2227,7 +2222,7 @@ extern (C) void gc_minimize()
     })();
 }
 
-extern (C) uint gc_getAttr( void* p )
+uint gc_getAttr(void* p)
 {
     if (p is null)
         return 0;
@@ -2241,7 +2236,7 @@ extern (C) uint gc_getAttr( void* p )
     })();
 }
 
-extern (C) uint gc_setAttr(void* p, uint attrs)
+uint gc_setAttr(void* p, uint attrs)
 {
     if (p is null)
         return 0;
@@ -2257,7 +2252,7 @@ extern (C) uint gc_setAttr(void* p, uint attrs)
     })();
 }
 
-extern (C) uint gc_clrAttr(void* p, uint attrs)
+uint gc_clrAttr(void* p, uint attrs)
 {
     if (p is null)
         return 0;
@@ -2273,7 +2268,7 @@ extern (C) uint gc_clrAttr(void* p, uint attrs)
     })();
 }
 
-extern (C) void* gc_malloc(size_t size, uint attrs = 0,
+void* gc_malloc(size_t size, uint attrs = 0,
         PointerMap ptrmap = PointerMap.init)
 {
     if (size == 0)
@@ -2284,7 +2279,7 @@ extern (C) void* gc_malloc(size_t size, uint attrs = 0,
     })();
 }
 
-extern (C) void* gc_calloc(size_t size, uint attrs = 0,
+void* gc_calloc(size_t size, uint attrs = 0,
         PointerMap ptrmap = PointerMap.init)
 {
     if (size == 0)
@@ -2295,7 +2290,7 @@ extern (C) void* gc_calloc(size_t size, uint attrs = 0,
     })();
 }
 
-extern (C) void* gc_realloc(void* p, size_t size, uint attrs = 0,
+void* gc_realloc(void* p, size_t size, uint attrs = 0,
         PointerMap ptrmap = PointerMap.init)
 {
     return locked!(void*, () {
@@ -2304,7 +2299,7 @@ extern (C) void* gc_realloc(void* p, size_t size, uint attrs = 0,
     })();
 }
 
-extern (C) size_t gc_extend(void* p, size_t min_size, size_t max_size)
+size_t gc_extend(void* p, size_t min_size, size_t max_size)
 {
     return locked!(size_t, () {
         assert (Invariant()); scope (exit) assert (Invariant());
@@ -2312,7 +2307,7 @@ extern (C) size_t gc_extend(void* p, size_t min_size, size_t max_size)
     })();
 }
 
-extern (C) size_t gc_reserve(size_t size)
+size_t gc_reserve(size_t size)
 {
     if (size == 0)
         return 0;
@@ -2322,7 +2317,7 @@ extern (C) size_t gc_reserve(size_t size)
     })();
 }
 
-extern (C) void gc_free( void* p )
+void gc_free(void* p)
 {
     if (p is null)
         return;
@@ -2332,7 +2327,7 @@ extern (C) void gc_free( void* p )
     })();
 }
 
-extern (C) void* gc_addrOf( void* p )
+void* gc_addrOf(void* p)
 {
     if (p is null)
         return null;
@@ -2342,7 +2337,7 @@ extern (C) void* gc_addrOf( void* p )
     })();
 }
 
-extern (C) size_t gc_sizeOf( void* p )
+size_t gc_sizeOf(void* p)
 {
     if (p is null)
         return 0;
@@ -2352,7 +2347,7 @@ extern (C) size_t gc_sizeOf( void* p )
     })();
 }
 
-extern (C) BlkInfo gc_query( void* p )
+BlkInfo gc_query(void* p)
 {
     if (p is null)
         return BlkInfo.init;
@@ -2364,7 +2359,7 @@ extern (C) BlkInfo gc_query( void* p )
 
 // NOTE: This routine is experimental.  The stats or function name may change
 //       before it is made officially available.
-extern (C) GCStats gc_stats()
+GCStats gc_stats()
 {
     return locked!(GCStats, () {
         assert (Invariant()); scope (exit) assert (Invariant());
@@ -2372,7 +2367,7 @@ extern (C) GCStats gc_stats()
     })();
 }
 
-extern (C) void gc_addRoot( void* p )
+void gc_addRoot(void* p)
 {
     if (p is null)
         return;
@@ -2383,7 +2378,7 @@ extern (C) void gc_addRoot( void* p )
     })();
 }
 
-extern (C) void gc_addRange(void* p, size_t size)
+void gc_addRange(void* p, size_t size)
 {
     if (p is null || size == 0)
         return;
@@ -2394,7 +2389,7 @@ extern (C) void gc_addRange(void* p, size_t size)
     })();
 }
 
-extern (C) void gc_removeRoot(void* p)
+void gc_removeRoot(void* p)
 {
     if (p is null)
         return;
@@ -2405,7 +2400,7 @@ extern (C) void gc_removeRoot(void* p)
     })();
 }
 
-extern (C) void gc_removeRange(void* p)
+void gc_removeRange(void* p)
 {
     if (p is null)
         return;
@@ -2416,19 +2411,19 @@ extern (C) void gc_removeRange(void* p)
     })();
 }
 
-extern (C) void* gc_weakpointerCreate( Object r )
+void* gc_weakpointerCreate(Object r)
 {
     // weakpointers do their own locking
     return weakpointerCreate(r);
 }
 
-extern (C) void gc_weakpointerDestroy( void* wp )
+void gc_weakpointerDestroy(void* wp)
 {
     // weakpointers do their own locking
     weakpointerDestroy(wp);
 }
 
-extern (C) Object gc_weakpointerGet( void* wp )
+Object gc_weakpointerGet(void* wp)
 {
     // weakpointers do their own locking
     return weakpointerGet(wp);
