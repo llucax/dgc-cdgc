@@ -218,6 +218,15 @@ struct GC
     Stats stats;
 }
 
+// call locked if necessary
+private T locked(T, alias Code)()
+{
+    if (thread_needLock())
+        synchronized (gc.lock) return Code();
+    else
+       return Code();
+}
+
 private GC* gc;
 
 bool Invariant()
@@ -358,10 +367,13 @@ size_t findSize(void *p)
 
 
 /**
- *
+ * Determine the base address of the block containing p.  If p is not a gc
+ * allocated pointer, return null.
  */
 BlkInfo getInfo(void* p)
 {
+    assert (p !is null);
+
     Pool*   pool;
     BlkInfo info;
 
@@ -477,7 +489,7 @@ static Bins findBin(size_t size)
  * Mark all memory in the pool as B_FREE.
  * Return the actual number of bytes reserved or 0 on error.
  */
-size_t reserveNoSync(size_t size)
+size_t reserve(size_t size)
 {
     assert(size != 0);
     size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
@@ -492,7 +504,7 @@ size_t reserveNoSync(size_t size)
 /**
  * Minimizes physical memory usage by returning free pools to the OS.
  */
-void minimizeNoSync()
+void minimize()
 {
     size_t n;
     size_t pn;
@@ -1276,172 +1288,10 @@ void initialize()
 }
 
 
-/**
- *
- */
-void enable()
-{
-    if (!thread_needLock())
-    {
-        assert(gc.disabled > 0);
-        gc.disabled--;
-    }
-    else synchronized (gc.lock)
-    {
-        assert(gc.disabled > 0);
-        gc.disabled--;
-    }
-}
-
-
-/**
- *
- */
-void disable()
-{
-    if (!thread_needLock())
-    {
-        gc.disabled++;
-    }
-    else synchronized (gc.lock)
-    {
-        gc.disabled++;
-    }
-}
-
-
-/**
- *
- */
-uint getAttr(void* p)
-{
-    if (!p)
-    {
-        return 0;
-    }
-
-    uint go()
-    {
-        Pool* pool = findPool(p);
-        uint  old_attrs = 0;
-
-        if (pool)
-        {
-            auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-
-            old_attrs = getAttr(pool, bit_i);
-        }
-        return old_attrs;
-    }
-
-    if (!thread_needLock())
-    {
-        return go();
-    }
-    else synchronized (gc.lock)
-    {
-        return go();
-    }
-}
-
-
-/**
- *
- */
-uint setAttr(void* p, uint mask)
-{
-    if (!p)
-    {
-        return 0;
-    }
-
-    uint go()
-    {
-        Pool* pool = findPool(p);
-        uint  old_attrs = 0;
-
-        if (pool)
-        {
-            auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-
-            old_attrs = getAttr(pool, bit_i);
-            setAttr(pool, bit_i, mask);
-        }
-        return old_attrs;
-    }
-
-    if (!thread_needLock())
-    {
-        return go();
-    }
-    else synchronized (gc.lock)
-    {
-        return go();
-    }
-}
-
-
-/**
- *
- */
-uint clrAttr(void* p, uint mask)
-{
-    if (!p)
-    {
-        return 0;
-    }
-
-    uint go()
-    {
-        Pool* pool = findPool(p);
-        uint  old_attrs = 0;
-
-        if (pool)
-        {
-            auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-
-            old_attrs = getAttr(pool, bit_i);
-            clrAttr(pool, bit_i, mask);
-        }
-        return old_attrs;
-    }
-
-    if (!thread_needLock())
-    {
-        return go();
-    }
-    else synchronized (gc.lock)
-    {
-        return go();
-    }
-}
-
-
-/**
- *
- */
-void *malloc(size_t size, uint attrs, PointerMap ptrmap)
-{
-    if (!size)
-    {
-        return null;
-    }
-
-    if (!thread_needLock())
-    {
-        return mallocNoSync(size, attrs, ptrmap.bits.ptr);
-    }
-    else synchronized (gc.lock)
-    {
-        return mallocNoSync(size, attrs, ptrmap.bits.ptr);
-    }
-}
-
-
 //
 //
 //
-private void *mallocNoSync(size_t size, uint attrs, size_t* pm_bitmask)
+private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
 {
     assert(size != 0);
 
@@ -1549,73 +1399,36 @@ private void *mallocNoSync(size_t size, uint attrs, size_t* pm_bitmask)
 }
 
 
-/**
- *
- */
-void *calloc(size_t size, uint attrs, PointerMap ptrmap)
-{
-    if (!size)
-    {
-        return null;
-    }
-
-    if (!thread_needLock())
-    {
-        return callocNoSync(size, attrs, ptrmap.bits.ptr);
-    }
-    else synchronized (gc.lock)
-    {
-        return callocNoSync(size, attrs, ptrmap.bits.ptr);
-    }
-}
-
-
 //
 //
 //
-private void *callocNoSync(size_t size, uint attrs, size_t* pm_bitmask)
+private void *calloc(size_t size, uint attrs, size_t* pm_bitmask)
 {
     assert(size != 0);
 
-    void *p = mallocNoSync(size, attrs, pm_bitmask);
+    void *p = malloc(size, attrs, pm_bitmask);
     memset(p, 0, size);
     return p;
 }
 
 
-/**
- *
- */
-void *realloc(void *p, size_t size, uint attrs, PointerMap ptrmap)
-{
-    if (!thread_needLock())
-    {
-        return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
-    }
-    else synchronized (gc.lock)
-    {
-        return reallocNoSync(p, size, attrs, ptrmap.bits.ptr);
-    }
-}
-
-
 //
 //
 //
-private void *reallocNoSync(void *p, size_t size, uint attrs,
+private void *realloc(void *p, size_t size, uint attrs,
         size_t* pm_bitmask)
 {
     if (!size)
     {
         if (p)
         {
-            freeNoSync(p);
+            free(p);
             p = null;
         }
     }
     else if (!p)
     {
-        p = mallocNoSync(size, attrs, pm_bitmask);
+        p = malloc(size, attrs, pm_bitmask);
     }
     else
     {
@@ -1652,7 +1465,7 @@ private void *reallocNoSync(void *p, size_t size, uint attrs,
             size_t sentinel_stored_size = *sentinel_size(p);
             if (sentinel_stored_size != size)
             {
-                void* p2 = mallocNoSync(size, attrs, pm_bitmask);
+                void* p2 = malloc(size, attrs, pm_bitmask);
                 if (sentinel_stored_size < size)
                     size = sentinel_stored_size;
                 cstring.memcpy(p2, p, size);
@@ -1674,13 +1487,10 @@ private void *reallocNoSync(void *p, size_t size, uint attrs,
                 if (newsz < psz)
                 {
                     // Shrink in place
-                    synchronized (gc.lock)
-                    {
-                        if (opts.options.mem_stomp)
-                            memset(p + size - pm_bitmask_size, 0xF2,
-                                    blk_size - size - pm_bitmask_size);
-                        pool.freePages(pagenum + newsz, psz - newsz);
-                    }
+                    if (opts.options.mem_stomp)
+                        memset(p + size - pm_bitmask_size, 0xF2,
+                                blk_size - size - pm_bitmask_size);
+                    pool.freePages(pagenum + newsz, psz - newsz);
                     if (has_pm) {
                         auto end_of_blk = cast(size_t**)(
                                 blk_base_addr + (PAGESIZE * newsz) -
@@ -1692,35 +1502,32 @@ private void *reallocNoSync(void *p, size_t size, uint attrs,
                 else if (pagenum + newsz <= pool.npages)
                 {
                     // Attempt to expand in place
-                    synchronized (gc.lock)
+                    for (size_t i = pagenum + psz; 1;)
                     {
-                        for (size_t i = pagenum + psz; 1;)
+                        if (i == pagenum + newsz)
                         {
-                            if (i == pagenum + newsz)
-                            {
-                                if (opts.options.mem_stomp)
-                                    memset(p + blk_size - pm_bitmask_size,
-                                            0xF0, size - blk_size
-                                            - pm_bitmask_size);
-                                memset(pool.pagetable + pagenum +
-                                        psz, B_PAGEPLUS, newsz - psz);
-                                if (has_pm) {
-                                    auto end_of_blk = cast(size_t**)(
-                                            blk_base_addr +
-                                            (PAGESIZE * newsz) -
-                                            pm_bitmask_size);
-                                    *end_of_blk = pm_bitmask;
-                                }
-                                return p;
+                            if (opts.options.mem_stomp)
+                                memset(p + blk_size - pm_bitmask_size,
+                                        0xF0, size - blk_size
+                                        - pm_bitmask_size);
+                            memset(pool.pagetable + pagenum +
+                                    psz, B_PAGEPLUS, newsz - psz);
+                            if (has_pm) {
+                                auto end_of_blk = cast(size_t**)(
+                                        blk_base_addr +
+                                        (PAGESIZE * newsz) -
+                                        pm_bitmask_size);
+                                *end_of_blk = pm_bitmask;
                             }
-                            if (i == pool.npages)
-                            {
-                                break;
-                            }
-                            if (pool.pagetable[i] != B_FREE)
-                                break;
-                            i++;
+                            return p;
                         }
+                        if (i == pool.npages)
+                        {
+                            break;
+                        }
+                        if (pool.pagetable[i] != B_FREE)
+                            break;
+                        i++;
                     }
                 }
             }
@@ -1729,7 +1536,7 @@ private void *reallocNoSync(void *p, size_t size, uint attrs,
             {
                 size -= pm_bitmask_size;
                 blk_size -= pm_bitmask_size;
-                void* p2 = mallocNoSync(size, attrs, pm_bitmask);
+                void* p2 = malloc(size, attrs, pm_bitmask);
                 if (blk_size < size)
                     size = blk_size;
                 cstring.memcpy(p2, p, size);
@@ -1743,30 +1550,14 @@ private void *reallocNoSync(void *p, size_t size, uint attrs,
 
 /**
  * Attempt to in-place enlarge the memory block pointed to by p by at least
- * minbytes beyond its current capacity, up to a maximum of maxsize.  This
+ * min_size beyond its current capacity, up to a maximum of max_size.  This
  * does not attempt to move the memory block (like realloc() does).
  *
  * Returns:
  *  0 if could not extend p,
  *  total size of entire memory block if successful.
  */
-size_t extend(void* p, size_t minsize, size_t maxsize)
-{
-    if (!thread_needLock())
-    {
-        return extendNoSync(p, minsize, maxsize);
-    }
-    else synchronized (gc.lock)
-    {
-        return extendNoSync(p, minsize, maxsize);
-    }
-}
-
-
-//
-//
-//
-private size_t extendNoSync(void* p, size_t minsize, size_t maxsize)
+private size_t extend(void* p, size_t minsize, size_t maxsize)
 in
 {
     assert( minsize <= maxsize );
@@ -1843,52 +1634,10 @@ body
 }
 
 
-/**
- *
- */
-size_t reserve(size_t size)
-{
-    if (!size)
-    {
-        return 0;
-    }
-
-    if (!thread_needLock())
-    {
-        return reserveNoSync(size);
-    }
-    else synchronized (gc.lock)
-    {
-        return reserveNoSync(size);
-    }
-}
-
-
-/**
- *
- */
-void free(void *p)
-{
-    if (!p)
-    {
-        return;
-    }
-
-    if (!thread_needLock())
-    {
-        return freeNoSync(p);
-    }
-    else synchronized (gc.lock)
-    {
-        return freeNoSync(p);
-    }
-}
-
-
 //
 //
 //
-private void freeNoSync(void *p)
+private void free(void *p)
 {
     assert (p);
 
@@ -1936,67 +1685,10 @@ private void freeNoSync(void *p)
 
 
 /**
- * Determine the base address of the block containing p.  If p is not a gc
- * allocated pointer, return null.
- */
-void* addrOf(void *p)
-{
-    if (!p)
-    {
-        return null;
-    }
-
-    if (!thread_needLock())
-    {
-        return addrOfNoSync(p);
-    }
-    else synchronized (gc.lock)
-    {
-        return addrOfNoSync(p);
-    }
-}
-
-
-//
-//
-//
-void* addrOfNoSync(void *p)
-{
-    if (!p)
-    {
-        return null;
-    }
-
-    return findBase(p);
-}
-
-
-/**
  * Determine the allocated size of pointer p.  If p is an interior pointer
  * or not a gc allocated pointer, return 0.
  */
-size_t sizeOf(void *p)
-{
-    if (!p)
-    {
-        return 0;
-    }
-
-    if (!thread_needLock())
-    {
-        return sizeOfNoSync(p);
-    }
-    else synchronized (gc.lock)
-    {
-        return sizeOfNoSync(p);
-    }
-}
-
-
-//
-//
-//
-private size_t sizeOfNoSync(void *p)
+private size_t sizeOf(void *p)
 {
     assert (p);
 
@@ -2044,66 +1736,11 @@ private size_t sizeOfNoSync(void *p)
 
 
 /**
- * Determine the base address of the block containing p.  If p is not a gc
- * allocated pointer, return null.
- */
-BlkInfo query(void *p)
-{
-    if (!p)
-    {
-        BlkInfo i;
-        return  i;
-    }
-
-    if (!thread_needLock())
-    {
-        return queryNoSync(p);
-    }
-    else synchronized (gc.lock)
-    {
-        return queryNoSync(p);
-    }
-}
-
-
-//
-//
-//
-BlkInfo queryNoSync(void *p)
-{
-    assert(p);
-
-    return getInfo(p);
-}
-
-
-/**
  * Verify that pointer p:
  *  1) belongs to this memory pool
  *  2) points to the start of an allocated piece of memory
  *  3) is not on a free list
  */
-void check(void *p)
-{
-    if (!p)
-    {
-        return;
-    }
-
-    if (!thread_needLock())
-    {
-        checkNoSync(p);
-    }
-    else synchronized (gc.lock)
-    {
-        checkNoSync(p);
-    }
-}
-
-
-//
-//
-//
 private void checkNoSync(void *p)
 {
     assert(p);
@@ -2169,187 +1806,18 @@ private void setStackBottom(void *p)
 
 
 /**
- * add p to list of roots
- */
-void addRoot(void *p)
-{
-    if (!p)
-    {
-        return;
-    }
-
-    if (!thread_needLock())
-    {
-        if (gc.roots.append(p) is null)
-            onOutOfMemoryError();
-    }
-    else synchronized (gc.lock)
-    {
-        if (gc.roots.append(p) is null)
-            onOutOfMemoryError();
-    }
-}
-
-
-/**
- * remove p from list of roots
- */
-void removeRoot(void *p)
-{
-    if (!p)
-    {
-        return;
-    }
-
-    bool r;
-    if (!thread_needLock())
-    {
-        r = gc.roots.remove(p);
-    }
-    else synchronized (gc.lock)
-    {
-        r = gc.roots.remove(p);
-    }
-    assert (r);
-}
-
-
-/**
- * add range to scan for roots
- */
-void addRange(void *p, size_t sz)
-{
-    if (!p || !sz)
-    {
-        return;
-    }
-
-    if (!thread_needLock())
-    {
-        if (gc.ranges.append(Range(p, p+sz)) is null)
-            onOutOfMemoryError();
-    }
-    else synchronized (gc.lock)
-    {
-        if (gc.ranges.append(Range(p, p+sz)) is null)
-            onOutOfMemoryError();
-    }
-}
-
-
-/**
- * remove range
- */
-void removeRange(void *p)
-{
-    if (!p)
-    {
-        return;
-    }
-
-    bool r;
-    if (!thread_needLock())
-    {
-        r = gc.ranges.remove(Range(p, null));
-    }
-    else synchronized (gc.lock)
-    {
-        r = gc.ranges.remove(Range(p, null));
-    }
-    assert (r);
-}
-
-
-/**
- * do full garbage collection
- */
-void fullCollect()
-{
-
-    if (!thread_needLock())
-    {
-        fullcollectshell();
-    }
-    else synchronized (gc.lock)
-    {
-        fullcollectshell();
-    }
-
-    version (none)
-    {
-        GCStats stats;
-        getStats(stats);
-    }
-
-}
-
-
-/**
- * do full garbage collection ignoring roots
- */
-void fullCollectNoStack()
-{
-    if (!thread_needLock())
-    {
-        gc.no_stack++;
-        fullcollectshell();
-        gc.no_stack--;
-    }
-    else synchronized (gc.lock)
-    {
-        gc.no_stack++;
-        fullcollectshell();
-        gc.no_stack--;
-    }
-}
-
-
-/**
- * minimize free space usage
- */
-void minimize()
-{
-    if (!thread_needLock())
-    {
-        minimizeNoSync();
-    }
-    else synchronized (gc.lock)
-    {
-        minimizeNoSync();
-    }
-}
-
-
-/**
  * Retrieve statistics about garbage collection.
  * Useful for debugging and tuning.
  */
-void getStats(out GCStats stats)
+private GCStats getStats()
 {
-    if (!thread_needLock())
-    {
-        getStatsNoSync(stats);
-    }
-    else synchronized (gc.lock)
-    {
-        getStatsNoSync(stats);
-    }
-}
-
-
-//
-//
-//
-private void getStatsNoSync(out GCStats stats)
-{
+    GCStats stats;
     size_t psize = 0;
     size_t usize = 0;
     size_t flsize = 0;
 
     size_t n;
     size_t bsize = 0;
-
-    memset(&stats, 0, GCStats.sizeof);
 
     for (n = 0; n < gc.pools.length; n++)
     {
@@ -2378,18 +1846,10 @@ private void getStatsNoSync(out GCStats stats)
     stats.poolsize = psize;
     stats.usedsize = bsize - flsize;
     stats.freelistsize = flsize;
+    return stats;
 }
 
 /******************* weak-reference support *********************/
-
-// call locked if necessary
-private T locked(T)(in T delegate() code)
-{
-    if (thread_needLock)
-        synchronized(gc.lock) return code();
-    else
-       return code();
-}
 
 private struct WeakPointer
 {
@@ -2401,7 +1861,9 @@ private struct WeakPointer
         // lock for memory consistency (parallel readers)
         // also ensures that weakpointerDestroy can be called while another
         // thread is freeing the reference with "delete"
-        locked!(void)({ reference = null; });
+        return locked!(void, () {
+            reference = null;
+        })();
     }
 }
 
@@ -2438,10 +1900,10 @@ void weakpointerDestroy( void* p )
         auto wp = cast(WeakPointer*)p;
         // must be extra careful about the GC or parallel threads
         // finalizing the reference at the same time
-        locked!(void)({
-               if (wp.reference)
-                   rt_detachDisposeEvent(wp.reference, &wp.ondestroy);
-              });
+        return locked!(void, () {
+            if (wp.reference)
+                rt_detachDisposeEvent(wp.reference, &wp.ondestroy);
+        })();
         cstdlib.free(wp);
     }
 }
@@ -2459,9 +1921,9 @@ Object weakpointerGet( void* p )
         // that'd require core.sync.Atomic and lots of care about memory
         // consistency it's an optional optimization see
         // http://dsource.org/projects/tango/browser/trunk/user/tango/core/Lifetime.d?rev=5100#L158
-        return locked!(Object)({
-              return (cast(WeakPointer*)p).reference;
-              });
+        return locked!(Object, () {
+            return (cast(WeakPointer*)p).reference;
+        })();
         }
 }
 
@@ -2664,7 +2126,9 @@ void *sentinel_sub(void *p)
 private int _termCleanupLevel=1;
 
 /// sets the cleanup level done by gc
-/// (0: none, 1: fullCollect, 2: fullCollectNoStack (might crash daemonThreads))
+/// 0: none
+/// 1: fullCollect
+/// 2: fullCollect ignoring stack roots (might crash daemonThreads)
 /// result !=0 if the value was invalid
 extern (C) int gc_setTermCleanupLevel(int cLevel){
     if (cLevel<0 || cLevel>2) return cLevel;
@@ -2714,163 +2178,259 @@ extern (C) void gc_term()
         //       I'm disabling cleanup for now until I can think about it some
         //       more.
         //
-        fullCollectNoStack(); // not really a 'collect all' -- still scans
-                                  // static data area, roots, and ranges.
+        // not really a 'collect all' -- still scans static data area, roots,
+        // and ranges.
+        return locked!(void, () {
+            gc.no_stack++;
+            fullcollectshell();
+            gc.no_stack--;
+        })();
     } else {
         // default (safe) clenup
-        fullCollect();
+        return locked!(void, () {
+            fullcollectshell();
+        })();
     }
 }
 
 extern (C) void gc_enable()
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    enable();
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        assert (gc.disabled > 0);
+        gc.disabled--;
+    })();
 }
 
 extern (C) void gc_disable()
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    disable();
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        gc.disabled++;
+    })();
 }
 
 extern (C) void gc_collect()
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    fullCollect();
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        fullcollectshell();
+    })();
 }
 
 
 extern (C) void gc_minimize()
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    minimize();
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        minimize();
+    })();
 }
 
 extern (C) uint gc_getAttr( void* p )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return getAttr(p);
+    if (p is null)
+        return 0;
+    return locked!(uint, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        Pool* pool = findPool(p);
+        if (pool is null)
+            return 0u;
+        auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+        return getAttr(pool, bit_i);
+    })();
 }
 
-extern (C) uint gc_setAttr( void* p, uint a )
+extern (C) uint gc_setAttr(void* p, uint attrs)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return setAttr(p, a);
+    if (p is null)
+        return 0;
+    return locked!(uint, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        Pool* pool = findPool(p);
+        if (pool is null)
+            return 0u;
+        auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+        uint old_attrs = getAttr(pool, bit_i);
+        setAttr(pool, bit_i, attrs);
+        return old_attrs;
+    })();
 }
 
-extern (C) uint gc_clrAttr( void* p, uint a )
+extern (C) uint gc_clrAttr(void* p, uint attrs)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return clrAttr(p, a);
+    if (p is null)
+        return 0;
+    return locked!(uint, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        Pool* pool = findPool(p);
+        if (pool is null)
+            return 0u;
+        auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+        uint old_attrs = getAttr(pool, bit_i);
+        clrAttr(pool, bit_i, attrs);
+        return old_attrs;
+    })();
 }
 
-extern (C) void* gc_malloc(size_t sz, uint attrs = 0,
+extern (C) void* gc_malloc(size_t size, uint attrs = 0,
         PointerMap ptrmap = PointerMap.init)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return malloc(sz, attrs, ptrmap);
+    if (size == 0)
+        return null;
+    return locked!(void*, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return malloc(size, attrs, ptrmap.bits.ptr);
+    })();
 }
 
-extern (C) void* gc_calloc(size_t sz, uint attrs = 0,
+extern (C) void* gc_calloc(size_t size, uint attrs = 0,
         PointerMap ptrmap = PointerMap.init)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return calloc(sz, attrs, ptrmap);
+    if (size == 0)
+        return null;
+    return locked!(void*, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return calloc(size, attrs, ptrmap.bits.ptr);
+    })();
 }
 
-extern (C) void* gc_realloc(void* p, size_t sz, uint attrs = 0,
+extern (C) void* gc_realloc(void* p, size_t size, uint attrs = 0,
         PointerMap ptrmap = PointerMap.init)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return realloc(p, sz, attrs, ptrmap);
+    return locked!(void*, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return realloc(p, size, attrs, ptrmap.bits.ptr);
+    })();
 }
 
-extern (C) size_t gc_extend( void* p, size_t mx, size_t sz )
+extern (C) size_t gc_extend(void* p, size_t min_size, size_t max_size)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return extend(p, mx, sz);
+    return locked!(size_t, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return extend(p, min_size, max_size);
+    })();
 }
 
-extern (C) size_t gc_reserve( size_t sz )
+extern (C) size_t gc_reserve(size_t size)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return reserve(sz);
+    if (size == 0)
+        return 0;
+    return locked!(size_t, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return reserve(size);
+    })();
 }
 
 extern (C) void gc_free( void* p )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    free(p);
+    if (p is null)
+        return;
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        free(p);
+    })();
 }
 
 extern (C) void* gc_addrOf( void* p )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return addrOf(p);
+    if (p is null)
+        return null;
+    return locked!(void*, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return findBase(p);
+    })();
 }
 
 extern (C) size_t gc_sizeOf( void* p )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return sizeOf(p);
+    if (p is null)
+        return 0;
+    return locked!(size_t, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return sizeOf(p);
+    })();
 }
 
 extern (C) BlkInfo gc_query( void* p )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    return query(p);
+    if (p is null)
+        return BlkInfo.init;
+    return locked!(BlkInfo, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return getInfo(p);
+    })();
 }
 
 // NOTE: This routine is experimental.  The stats or function name may change
 //       before it is made officially available.
 extern (C) GCStats gc_stats()
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    GCStats stats = void;
-    getStats(stats);
-    return stats;
+    return locked!(GCStats, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        return getStats();
+    })();
 }
 
 extern (C) void gc_addRoot( void* p )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    addRoot(p);
+    if (p is null)
+        return;
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        if (gc.roots.append(p) is null)
+            onOutOfMemoryError();
+    })();
 }
 
-extern (C) void gc_addRange( void* p, size_t sz )
+extern (C) void gc_addRange(void* p, size_t size)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    addRange(p, sz);
+    if (p is null || size == 0)
+        return;
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        if (gc.ranges.append(Range(p, p + size)) is null)
+            onOutOfMemoryError();
+    })();
 }
 
-extern (C) void gc_removeRoot( void *p )
+extern (C) void gc_removeRoot(void* p)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    removeRoot(p);
+    if (p is null)
+        return;
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        bool r = gc.roots.remove(p);
+        assert (r);
+    })();
 }
 
-extern (C) void gc_removeRange( void *p )
+extern (C) void gc_removeRange(void* p)
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
-    removeRange(p);
+    if (p is null)
+        return;
+    return locked!(void, () {
+        assert (Invariant()); scope (exit) assert (Invariant());
+        bool r = gc.ranges.remove(Range(p, null));
+        assert (r);
+    })();
 }
 
 extern (C) void* gc_weakpointerCreate( Object r )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
+    // weakpointers do their own locking
     return weakpointerCreate(r);
 }
 
 extern (C) void gc_weakpointerDestroy( void* wp )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
+    // weakpointers do their own locking
     weakpointerDestroy(wp);
 }
 
 extern (C) Object gc_weakpointerGet( void* wp )
 {
-    assert (Invariant()); scope (exit) assert (Invariant());
+    // weakpointers do their own locking
     return weakpointerGet(wp);
 }
 
