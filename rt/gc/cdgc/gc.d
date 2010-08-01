@@ -295,66 +295,15 @@ Pool *findPool(void *p)
 BlkInfo getInfo(void* p)
 {
     assert (p !is null);
-
-    Pool*   pool;
+    Pool* pool = findPool(p);
+    if (pool is null)
+        return BlkInfo.init;
     BlkInfo info;
-
-    pool = findPool(p);
-    if (pool)
-    {
-        size_t offset = cast(size_t)(p - pool.baseAddr);
-        size_t pn = offset / PAGESIZE;
-        Bins   bin = cast(Bins)pool.pagetable[pn];
-
-        ////////////////////////////////////////////////////////////////////
-        // findAddr
-        ////////////////////////////////////////////////////////////////////
-
-        if (bin <= B_PAGE)
-        {
-            info.base = pool.baseAddr + (offset & notbinsize[bin]);
-        }
-        else if (bin == B_PAGEPLUS)
-        {
-            do
-            {
-                --pn, offset -= PAGESIZE;
-            }
-            while (cast(Bins)pool.pagetable[pn] == B_PAGEPLUS);
-
-            info.base = pool.baseAddr + (offset & (offset.max ^ (PAGESIZE-1)));
-
-            // fix bin for use by size calc below
-            bin = cast(Bins)pool.pagetable[pn];
-        }
-
-        ////////////////////////////////////////////////////////////////////
-        // findSize
-        ////////////////////////////////////////////////////////////////////
-
-        info.size = binsize[bin];
-        if (bin == B_PAGE)
-        {
-            ubyte* pt;
-            size_t i;
-
-            pt = &pool.pagetable[0];
-            for (i = pn + 1; i < pool.npages; i++)
-            {
-                if (pt[i] != B_PAGEPLUS)
-                    break;
-            }
-            info.size = (i - pn) * PAGESIZE;
-        }
-
-        ////////////////////////////////////////////////////////////////////
-        // getAttr
-        ////////////////////////////////////////////////////////////////////
-
-        info.attr = getAttr(pool, cast(size_t)(offset / 16));
-        if (!(info.attr & BlkAttr.NO_SCAN))
-            info.size -= (size_t*).sizeof;  // bitmask
-    }
+    info.base = pool.findBase(p);
+    info.size = pool.findSize(info.base);
+    info.attr = getAttr(pool, cast(size_t)(info.base - pool.baseAddr) / 16u);
+    if (!opts.options.conservative && !(info.attr & BlkAttr.NO_SCAN))
+        info.size -= size_t.sizeof; // PointerMap bitmask
     return info;
 }
 
