@@ -289,81 +289,6 @@ Pool *findPool(void *p)
 
 
 /**
- * Find base address of block containing pointer p.
- * Returns null if not a gc'd pointer
- */
-void* findBase(void *p)
-{
-    Pool *pool;
-
-    pool = findPool(p);
-    if (pool)
-    {
-        size_t offset = cast(size_t)(p - pool.baseAddr);
-        size_t pn = offset / PAGESIZE;
-        Bins   bin = cast(Bins)pool.pagetable[pn];
-
-        // Adjust bit to be at start of allocated memory block
-        if (bin <= B_PAGE)
-        {
-            return pool.baseAddr + (offset & notbinsize[bin]);
-        }
-        else if (bin == B_PAGEPLUS)
-        {
-            do
-            {
-                --pn, offset -= PAGESIZE;
-            } while (cast(Bins)pool.pagetable[pn] == B_PAGEPLUS);
-
-            return pool.baseAddr + (offset & (offset.max ^ (PAGESIZE-1)));
-        }
-        else
-        {
-            // we are in a B_FREE page
-            return null;
-        }
-    }
-    return null;
-}
-
-
-/**
- * Find size of pointer p.
- * Returns 0 if not a gc'd pointer
- */
-size_t findSize(void *p)
-{
-    Pool*  pool;
-    size_t size = 0;
-
-    pool = findPool(p);
-    if (pool)
-    {
-        size_t pagenum;
-        Bins   bin;
-
-        pagenum = cast(size_t)(p - pool.baseAddr) / PAGESIZE;
-        bin = cast(Bins)pool.pagetable[pagenum];
-        size = binsize[bin];
-        if (bin == B_PAGE)
-        {
-            ubyte* pt;
-            size_t i;
-
-            pt = &pool.pagetable[0];
-            for (i = pagenum + 1; i < pool.npages; i++)
-            {
-                if (pt[i] != B_PAGEPLUS)
-                    break;
-            }
-            size = (i - pagenum) * PAGESIZE;
-        }
-    }
-    return size;
-}
-
-
-/**
  * Determine the base address of the block containing p.  If p is not a gc
  * allocated pointer, return null.
  */
@@ -1442,8 +1367,8 @@ private void *realloc(void *p, size_t size, uint attrs,
         else
             attrs = getAttr(pool, bit_i);
 
-        void* blk_base_addr = findBase(p);
-        size_t blk_size = findSize(p);
+        void* blk_base_addr = pool.findBase(p);
+        size_t blk_size = pool.findSize(p);
         bool has_pm = has_pointermap(attrs);
         size_t pm_bitmask_size = 0;
         if (has_pm) {
@@ -1572,8 +1497,8 @@ body
     auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
     uint attrs = getAttr(pool, bit_i);
 
-    void* blk_base_addr = findBase(p);
-    size_t blk_size = findSize(p);
+    void* blk_base_addr = pool.findBase(p);
+    size_t blk_size = pool.findSize(p);
     bool has_pm = has_pointermap(attrs);
     size_t* pm_bitmask = null;
     size_t pm_bitmask_size = 0;
@@ -1699,7 +1624,7 @@ private size_t sizeOf(void *p)
     auto biti = cast(size_t)(p - pool.baseAddr) / 16;
     uint attrs = getAttr(pool, biti);
 
-    size_t size = findSize(p);
+    size_t size = pool.findSize(p);
     size_t pm_bitmask_size = 0;
     if (has_pointermap(attrs))
         pm_bitmask_size = size_t.sizeof;
@@ -2064,6 +1989,47 @@ struct Pool
 
 
     /**
+     * Find base address of block containing pointer p.
+     * Returns null if the pointer doesn't belong to this pool
+     */
+    void* findBase(void *p)
+    {
+        size_t offset = cast(size_t)(p - this.baseAddr);
+        size_t pagenum = offset / PAGESIZE;
+        Bins bin = cast(Bins)this.pagetable[pagenum];
+        // Adjust bit to be at start of allocated memory block
+        if (bin <= B_PAGE)
+            return this.baseAddr + (offset & notbinsize[bin]);
+        if (bin == B_PAGEPLUS) {
+            do {
+                --pagenum, offset -= PAGESIZE;
+            } while (cast(Bins)this.pagetable[pagenum] == B_PAGEPLUS);
+            return this.baseAddr + (offset & (offset.max ^ (PAGESIZE-1)));
+        }
+        // we are in a B_FREE page
+        return null;
+    }
+
+
+    /**
+     * Find size of pointer p.
+     * Returns 0 if p doesn't belong to this pool if if it's block size is less
+     * than a PAGE.
+     */
+    size_t findSize(void *p)
+    {
+        size_t pagenum = cast(size_t)(p - this.baseAddr) / PAGESIZE;
+        Bins bin = cast(Bins)this.pagetable[pagenum];
+        if (bin != B_PAGE)
+            return binsize[bin];
+        for (size_t i = pagenum + 1; i < this.npages; i++)
+            if (this.pagetable[i] != B_PAGEPLUS)
+                return (i - pagenum) * PAGESIZE;
+        return (this.npages - pagenum) * PAGESIZE;
+    }
+
+
+    /**
      * Used for sorting pools
      */
     int opCmp(in Pool other)
@@ -2333,7 +2299,10 @@ void* gc_addrOf(void* p)
         return null;
     return locked!(void*, () {
         assert (Invariant()); scope (exit) assert (Invariant());
-        return findBase(p);
+        Pool* pool = findPool(p);
+        if (pool is null)
+            return null;
+        return pool.findBase(p);
     })();
 }
 
