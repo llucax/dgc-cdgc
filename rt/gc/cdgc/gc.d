@@ -264,26 +264,28 @@ bool Invariant()
  * Return null if not in a Pool.
  * Assume pools is sorted.
  */
-Pool *findPool(void *p)
+Pool* findPool(void* p)
 {
-    if (p >= gc.min_addr && p < gc.max_addr)
-    {
-        if (gc.pools.length == 1)
-        {
-            return gc.pools[0];
-        }
-
-        for (size_t i = 0; i < gc.pools.length; i++)
-        {
-            Pool* pool = gc.pools[i];
-            if (p < pool.topAddr)
-            {
-                if (pool.baseAddr <= p)
-                    return pool;
-                break;
-            }
-        }
+    if (p < gc.min_addr || p >= gc.max_addr)
+        return null;
+    if (gc.pools.length == 0)
+        return null;
+    if (gc.pools.length == 1)
+        return gc.pools[0];
+    /// The pooltable[] is sorted by address, so do a binary search
+    size_t low = 0;
+    size_t high = gc.pools.length - 1;
+    while (low <= high) {
+        size_t mid = (low + high) / 2;
+        auto pool = gc.pools[mid];
+        if (p < pool.baseAddr)
+            high = mid - 1;
+        else if (p >= pool.topAddr)
+            low = mid + 1;
+        else
+            return pool;
     }
+    // Not found
     return null;
 }
 
