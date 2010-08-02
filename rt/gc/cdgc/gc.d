@@ -302,8 +302,20 @@ BlkInfo getInfo(void* p)
     info.base = pool.findBase(p);
     info.size = pool.findSize(info.base);
     info.attr = getAttr(pool, cast(size_t)(info.base - pool.baseAddr) / 16u);
-    if (!opts.options.conservative && !(info.attr & BlkAttr.NO_SCAN))
+    if (has_pointermap(info.attr)) {
         info.size -= size_t.sizeof; // PointerMap bitmask
+        // Points to the PointerMap bitmask pointer, not user data
+        if (p >= (info.base + info.size)) {
+            return BlkInfo.init;
+        }
+    }
+    if (opts.options.sentinel) {
+        info.base = sentinel_add(info.base);
+        // points to sentinel data, not user data
+        if (p < info.base || p >= sentinel_post(info.base))
+            return BlkInfo.init;
+        info.size -= SENTINEL_EXTRA;
+    }
     return info;
 }
 
