@@ -939,6 +939,7 @@ size_t fullcollect(void *stackTop)
     for (n = 0; n < gc.pools.length; n++)
     {
         pool = gc.pools[n];
+        pool.clear_cache();
         uint*  bbase = pool.mark.base();
         size_t pn;
         for (pn = 0; pn < pool.npages; pn++, bbase += PAGESIZE / (32 * 16))
@@ -1842,6 +1843,15 @@ struct Pool
     size_t npages;
     ubyte* pagetable;
 
+    /// Cache for findSize()
+    size_t cached_size;
+    void* cached_ptr;
+
+    void clear_cache()
+    {
+        this.cached_ptr = null;
+        this.cached_size = 0;
+    }
 
     void initialize(size_t npages)
     {
@@ -1998,10 +2008,15 @@ struct Pool
         Bins bin = cast(Bins)this.pagetable[pagenum];
         if (bin != B_PAGE)
             return binsize[bin];
-        for (size_t i = pagenum + 1; i < this.npages; i++)
+        if (this.cached_ptr == p)
+            return this.cached_size;
+        size_t i = pagenum + 1;
+        for (; i < this.npages; i++)
             if (this.pagetable[i] != B_PAGEPLUS)
-                return (i - pagenum) * PAGESIZE;
-        return (this.npages - pagenum) * PAGESIZE;
+                break;
+        this.cached_ptr = p;
+        this.cached_size = (i - pagenum) * PAGESIZE;
+        return this.cached_size;
     }
 
 
