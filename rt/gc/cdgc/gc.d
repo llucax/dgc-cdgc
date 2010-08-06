@@ -621,18 +621,7 @@ void mark(void *pbot, void *ptop, size_t* pm_bitmask)
 
     //printf("marking range: %p -> %p\n", pbot, ptop);
     for (; p1 + type_size <= p2; p1 += type_size) {
-        size_t n = 0;
-        if (has_type_info) {
-            while (n < type_size && pm_bits[n / BITS_PER_WORD] == 0)
-                n += BITS_PER_WORD;
-            if (n < type_size && (pm_bits[n / BITS_PER_WORD] &
-                        ((1 << (BITS_PER_WORD / 2)) - 1)) == 0)
-                n += BITS_PER_WORD / 2;
-            else if (n < type_size && (pm_bits[n / BITS_PER_WORD] &
-                        ((1 << (BITS_PER_WORD / 4)) - 1)) == 0)
-                n += BITS_PER_WORD / 4;
-        }
-        for (; n < type_size; n++) {
+        for (size_t n = 0; n < type_size; n++) {
             // scan bit set for this word
             if (has_type_info &&
                     !(pm_bits[n / BITS_PER_WORD] & (1 << (n % BITS_PER_WORD))))
