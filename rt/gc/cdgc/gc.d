@@ -325,7 +325,7 @@ BlkInfo getInfo(void* p)
 /**
  * Compute bin for size.
  */
-static Bins findBin(size_t size)
+Bins findBin(size_t size)
 {
     Bins bin;
     if (size <= 256)
