@@ -26,7 +26,7 @@
 
 module rt.gc.cdgc.bits;
 
-import rt.gc.cdgc.alloc: os_mem_map, os_mem_unmap, Vis;
+import os = rt.gc.cdgc.os;
 
 import cstring = tango.stdc.string;
 
@@ -67,15 +67,15 @@ struct GCBits
         return (nwords + 2) * uint.sizeof; // +2 for sentinels
     }
 
-    void Dtor(Vis vis = Vis.PRIV)
+    void Dtor(os.Vis vis = os.Vis.PRIV)
     {
-        // Even when os_mem_unmap() can be called with a null pointer, the
-        // extra call might be significant. On hard GC benchmarks making the
-        // test for null here (i.e. not making the call) can reduce the GC time
-        // by almost ~5%.
+        // Even when os.dealloc() can be called with a null pointer, the extra
+        // call might be significant. On hard GC benchmarks making the test for
+        // null here (i.e. not making the call) can reduce the GC time by
+        // almost ~5%.
         if (data)
         {
-            os_mem_unmap(data, data_size, vis);
+            os.dealloc(data, data_size, vis);
             data = null;
         }
     }
@@ -88,11 +88,11 @@ struct GCBits
         }
     }
 
-    void alloc(size_t nbits, Vis vis = Vis.PRIV)
+    void alloc(size_t nbits, os.Vis vis = os.Vis.PRIV)
     {
         this.nbits = nbits;
         this.nwords = (nbits + (BITS_PER_WORD - 1)) >> BITS_SHIFT;
-        this.data = cast(uint*) os_mem_map(data_size, vis);
+        this.data = cast(uint*) os.alloc(data_size, vis);
         if (!data)
             onOutOfMemoryError();
     }

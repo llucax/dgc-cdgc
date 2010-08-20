@@ -21,10 +21,49 @@
  *     be misrepresented as being the original software.
  *  o  This notice may not be removed or altered from any source
  *     distribution.
- * Authors:   Walter Bright, David Friedman, Sean Kelly
+ * Authors:   Walter Bright, David Friedman, Sean Kelly, Leandro Lucarella
  */
 
-module rt.gc.cdgc.alloc;
+module rt.gc.cdgc.os;
+
+
+// Fork
+////////////////////////////////////////////////////////////////////////
+
+// Public interface/Documentation
+
+version (D_Ddoc) {
+
+/**
+ * Indicates if an implementation support fork().
+ *
+ * The value shown here is just demostrative, the real value is defined based
+ * on the OS it's being compiled in.
+ */
+const HAVE_FORK = true;
+
+public import tango.stdc.posix.unistd: pid_t, fork;
+public import tango.stdc.posix.sys.wait: waitpid;
+
+}
+
+// Implementations
+else version (Posix) {
+    enum { HAVE_FORK = true }
+    public import tango.stdc.posix.unistd: pid_t, fork;
+    public import tango.stdc.posix.sys.wait: waitpid;
+}
+
+else {
+    enum { HAVE_FORK = false }
+    alias int pid_t;
+    pid_t fork() { assert (false); return -1; }
+    pid_t waitpid(pid_t, int*, int) { assert (false); return -1; }
+}
+
+
+// Allocation
+////////////////////////////////////////////////////////////////////////
 
 version (Win32)
     import tango.sys.win32.UserGdi;
@@ -58,15 +97,15 @@ const HAVE_SHARED = false;
 /**
  * Map memory.
  */
-void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV);
+void* alloc(size_t nbytes, Vis vis = Vis.PRIV);
 
 /**
- * Unmap memory allocated with os_mem_map().
+ * Unmap memory allocated with alloc().
  * Returns:
  *      true  success
  *      false failure
  */
-bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV);
+bool dealloc(void* base, size_t nbytes, Vis vis = Vis.PRIV);
 
 }
 
@@ -74,14 +113,14 @@ bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV);
 else static if (is(typeof(VirtualAlloc))) {
     enum { HAVE_SHARED = false }
 
-    void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV)
+    void* alloc(size_t nbytes, Vis vis = Vis.PRIV)
     {
         assert (vis == Vis.PRIV);
         return VirtualAlloc(null, nbytes, MEM_RESERVE | MEM_COMMIT,
                 PAGE_READWRITE);
     }
 
-    bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV)
+    bool dealloc(void* base, size_t nbytes, Vis vis = Vis.PRIV)
     {
         assert (vis == Vis.PRIV);
         return VirtualFree(base, 0, MEM_RELEASE) != 0;
@@ -92,7 +131,7 @@ else static if (is(typeof(VirtualAlloc))) {
 else static if (is(typeof(mmap)) && is(typeof(MAP_ANON))) {
     enum { HAVE_SHARED = true }
 
-    void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV)
+    void* alloc(size_t nbytes, Vis vis = Vis.PRIV)
     {
         auto flags = MAP_ANON;
         if (vis == Vis.SHARED)
@@ -103,7 +142,7 @@ else static if (is(typeof(mmap)) && is(typeof(MAP_ANON))) {
         return (p == MAP_FAILED) ? null : p;
     }
 
-    bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV)
+    bool dealloc(void* base, size_t nbytes, Vis vis = Vis.PRIV)
     {
         // vis is not necessary to unmap
         return munmap(base, nbytes) == 0;
@@ -122,7 +161,7 @@ else static if (is(typeof(malloc))) {
 
     const size_t PAGE_MASK = PAGESIZE - 1;
 
-    void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV)
+    void* alloc(size_t nbytes, Vis vis = Vis.PRIV)
     {
         assert (vis == Vis.PRIV);
         byte* p, q;
@@ -132,7 +171,7 @@ else static if (is(typeof(malloc))) {
         return q;
     }
 
-    bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV)
+    bool dealloc(void* base, size_t nbytes, Vis vis = Vis.PRIV)
     {
         assert (vis == Vis.PRIV);
         free(*cast(void**)(cast(byte*) base + nbytes));

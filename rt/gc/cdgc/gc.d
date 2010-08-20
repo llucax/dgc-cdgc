@@ -45,7 +45,7 @@ version = STACKGROWSDOWN;       // growing the stack means subtracting from the 
 import rt.gc.cdgc.bits: GCBits;
 import rt.gc.cdgc.stats: GCStats, Stats;
 import dynarray = rt.gc.cdgc.dynarray;
-import alloc = rt.gc.cdgc.alloc;
+import os = rt.gc.cdgc.os;
 import opts = rt.gc.cdgc.opts;
 
 import cstdlib = tango.stdc.stdlib;
@@ -1846,7 +1846,7 @@ struct Pool
     {
         size_t poolsize = npages * PAGESIZE;
         assert(poolsize >= POOLSIZE);
-        baseAddr = cast(byte *) alloc.os_mem_map(poolsize);
+        baseAddr = cast(byte *) os.alloc(poolsize);
 
         // Some of the code depends on page alignment of memory pools
         assert((cast(size_t)baseAddr & (PAGESIZE - 1)) == 0);
@@ -1881,7 +1881,7 @@ struct Pool
 
             if (npages)
             {
-                result = alloc.os_mem_unmap(baseAddr, npages * PAGESIZE);
+                result = os.dealloc(baseAddr, npages * PAGESIZE);
                 assert(result);
                 npages = 0;
             }
