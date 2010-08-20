@@ -36,12 +36,29 @@ else
 
 // Public interface/Documentation
 
+/**
+ * Visibility of the mapped memory.
+ */
+enum Vis
+{
+    PRIV, /// Private to this process
+    SHARED, /// Shared across fork()ed processes (only when HAVE_SHARED)
+}
+
 version (D_Ddoc) {
+
+/**
+ * Indicates if an implementation support mapping shared memory.
+ *
+ * The value shown here is just demostrative, the real value is defined based
+ * on the OS it's being compiled in.
+ */
+const HAVE_SHARED = false;
 
 /**
  * Map memory.
  */
-void* os_mem_map(size_t nbytes);
+void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV);
 
 /**
  * Unmap memory allocated with os_mem_map().
@@ -49,39 +66,53 @@ void* os_mem_map(size_t nbytes);
  *      true  success
  *      false failure
  */
-bool os_mem_unmap(void* base, size_t nbytes);
+bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV);
 
 }
 
 // Implementations
 else static if (is(typeof(VirtualAlloc))) {
-    void* os_mem_map(size_t nbytes)
+    enum { HAVE_SHARED = false }
+
+    void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV)
     {
+        assert (vis == Vis.PRIV);
         return VirtualAlloc(null, nbytes, MEM_RESERVE | MEM_COMMIT,
                 PAGE_READWRITE);
     }
 
-    bool os_mem_unmap(void* base, size_t nbytes)
+    bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV)
     {
+        assert (vis == Vis.PRIV);
         return VirtualFree(base, 0, MEM_RELEASE) != 0;
     }
+
 }
 
 else static if (is(typeof(mmap)) && is(typeof(MAP_ANON))) {
-    void* os_mem_map(size_t nbytes)
+    enum { HAVE_SHARED = true }
+
+    void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV)
     {
-        void* p = mmap(null, nbytes,
-                PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        auto flags = MAP_ANON;
+        if (vis == Vis.SHARED)
+            flags |= MAP_SHARED;
+        else // PRIV
+            flags |= MAP_PRIVATE;
+        void* p = mmap(null, nbytes, PROT_READ | PROT_WRITE, flags, -1, 0);
         return (p == MAP_FAILED) ? null : p;
     }
 
-    bool os_mem_unmap(void* base, size_t nbytes)
+    bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV)
     {
+        // vis is not necessary to unmap
         return munmap(base, nbytes) == 0;
     }
 }
 
 else static if (is(typeof(malloc))) {
+    enum { HAVE_SHARED = false }
+
     // NOTE: This assumes malloc granularity is at least (void*).sizeof.  If
     //       (req_size + PAGESIZE) is allocated, and the pointer is rounded up
     //       to PAGESIZE alignment, there will be space for a void* at the end
@@ -91,8 +122,9 @@ else static if (is(typeof(malloc))) {
 
     const size_t PAGE_MASK = PAGESIZE - 1;
 
-    void* os_mem_map(size_t nbytes)
+    void* os_mem_map(size_t nbytes, Vis vis = Vis.PRIV)
     {
+        assert (vis == Vis.PRIV);
         byte* p, q;
         p = cast(byte* ) malloc(nbytes + PAGESIZE);
         q = p + ((PAGESIZE - ((cast(size_t) p & PAGE_MASK))) & PAGE_MASK);
@@ -100,8 +132,9 @@ else static if (is(typeof(malloc))) {
         return q;
     }
 
-    bool os_mem_unmap(void* base, size_t nbytes)
+    bool os_mem_unmap(void* base, size_t nbytes, Vis vis = Vis.PRIV)
     {
+        assert (vis == Vis.PRIV);
         free(*cast(void**)(cast(byte*) base + nbytes));
         return true;
     }

@@ -26,7 +26,8 @@
 
 module rt.gc.cdgc.bits;
 
-import cstdlib = tango.stdc.stdlib;
+import rt.gc.cdgc.alloc: os_mem_map, os_mem_unmap, Vis;
+
 import cstring = tango.stdc.string;
 
 private extern (C) void onOutOfMemoryError();
@@ -60,15 +61,21 @@ struct GCBits
     size_t nwords = 0;    // allocated words in data[] excluding sentinals
     size_t nbits = 0;     // number of bits in data[] excluding sentinals
 
-    void Dtor()
+    /// Get the number of bytes needed to store nbits bits
+    size_t data_size()
     {
-        // Even when free() can be called with a null pointer, the extra call
-        // might be significant. On hard GC benchmarks making the test for null
-        // here (i.e. not making the call) can reduce the GC time by almost
-        // ~5%.
+        return (nwords + 2) * uint.sizeof; // +2 for sentinels
+    }
+
+    void Dtor(Vis vis = Vis.PRIV)
+    {
+        // Even when os_mem_unmap() can be called with a null pointer, the
+        // extra call might be significant. On hard GC benchmarks making the
+        // test for null here (i.e. not making the call) can reduce the GC time
+        // by almost ~5%.
         if (data)
         {
-            cstdlib.free(data);
+            os_mem_unmap(data, data_size, vis);
             data = null;
         }
     }
@@ -81,11 +88,11 @@ struct GCBits
         }
     }
 
-    void alloc(size_t nbits)
+    void alloc(size_t nbits, Vis vis = Vis.PRIV)
     {
         this.nbits = nbits;
-        nwords = (nbits + (BITS_PER_WORD - 1)) >> BITS_SHIFT;
-        data = cast(uint*)cstdlib.calloc(nwords + 2, uint.sizeof);
+        this.nwords = (nbits + (BITS_PER_WORD - 1)) >> BITS_SHIFT;
+        this.data = cast(uint*) os_mem_map(data_size, vis);
         if (!data)
             onOutOfMemoryError();
     }
