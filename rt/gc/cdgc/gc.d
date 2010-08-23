@@ -591,19 +591,10 @@ int allocPage(Bins bin)
 
 
 /**
- * Marks a range of memory using the conservative bit mask.  Used for
- * the stack, for the data segment, and additional memory ranges.
+ * Search a range of memory values and mark any pointers into the GC pool using
+ * type information (bitmask of pointer locations).
  */
-void mark_conservative(void* pbot, void* ptop)
-{
-    mark(pbot, ptop, PointerMap.init.bits.ptr);
-}
-
-
-/**
- * Search a range of memory values and mark any pointers into the GC pool.
- */
-void mark(void *pbot, void *ptop, size_t* pm_bitmask)
+void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
 {
     // TODO: make our own assert because assert uses the GC
     assert (pbot <= ptop);
@@ -776,10 +767,18 @@ size_t fullcollectshell()
  */
 size_t fullcollect(void *stackTop)
 {
-    size_t n;
-    Pool*  pool;
-
     debug(COLLECT_PRINTF) printf("Gcx.fullcollect()\n");
+    mark(stackTop);
+    return sweep();
+}
+
+
+/**
+ *
+ */
+void mark(void *stackTop)
+{
+    debug(COLLECT_PRINTF) printf("\tmark()\n");
 
     thread_suspendAll();
     gc.stats.world_stopped();
@@ -788,67 +787,68 @@ size_t fullcollect(void *stackTop)
     gc.size_cache = 0;
 
     gc.any_changes = false;
-    for (n = 0; n < gc.pools.length; n++)
+    for (size_t n = 0; n < gc.pools.length; n++)
     {
-        pool = gc.pools[n];
+        Pool* pool = gc.pools[n];
         pool.mark.zero();
         pool.scan.zero();
         pool.freebits.zero();
     }
 
     // Mark each free entry, so it doesn't get scanned
-    for (n = 0; n < B_PAGE; n++)
+    for (size_t n = 0; n < B_PAGE; n++)
     {
         for (List *list = gc.free_list[n]; list; list = list.next)
         {
-            pool = findPool(list);
+            Pool* pool = findPool(list);
             assert(pool);
             pool.freebits.set(cast(size_t)(cast(byte*)list - pool.baseAddr) / 16);
         }
     }
 
-    for (n = 0; n < gc.pools.length; n++)
+    for (size_t n = 0; n < gc.pools.length; n++)
     {
-        pool = gc.pools[n];
+        Pool* pool = gc.pools[n];
         pool.mark.copy(&pool.freebits);
     }
 
-    void mark_conservative_dg(void* pbot, void* ptop)
+    /// Marks a range of memory in conservative mode.
+    void mark_conservative_range(void* pbot, void* ptop)
     {
-        mark_conservative(pbot, ptop);
+        mark_range(pbot, ptop, PointerMap.init.bits.ptr);
     }
 
-    rt_scanStaticData(&mark_conservative_dg);
+    rt_scanStaticData(&mark_conservative_range);
 
     if (!gc.no_stack)
     {
         // Scan stacks and registers for each paused thread
-        thread_scanAll(&mark_conservative_dg, stackTop);
+        thread_scanAll(&mark_conservative_range, stackTop);
     }
 
     // Scan roots
     debug(COLLECT_PRINTF) printf("scan roots[]\n");
-    mark_conservative(gc.roots.ptr, gc.roots.ptr + gc.roots.length);
+    mark_conservative_range(gc.roots.ptr, gc.roots.ptr + gc.roots.length);
 
     // Scan ranges
     debug(COLLECT_PRINTF) printf("scan ranges[]\n");
-    for (n = 0; n < gc.ranges.length; n++)
+    for (size_t n = 0; n < gc.ranges.length; n++)
     {
         debug(COLLECT_PRINTF) printf("\t%x .. %x\n", gc.ranges[n].pbot, gc.ranges[n].ptop);
-        mark_conservative(gc.ranges[n].pbot, gc.ranges[n].ptop);
+        mark_conservative_range(gc.ranges[n].pbot, gc.ranges[n].ptop);
     }
 
     debug(COLLECT_PRINTF) printf("\tscan heap\n");
     while (gc.any_changes)
     {
         gc.any_changes = false;
-        for (n = 0; n < gc.pools.length; n++)
+        for (size_t n = 0; n < gc.pools.length; n++)
         {
             uint *bbase;
             uint *b;
             uint *btop;
 
-            pool = gc.pools[n];
+            Pool* pool = gc.pools[n];
 
             bbase = pool.scan.base();
             btop = bbase + pool.scan.nwords;
@@ -883,12 +883,12 @@ size_t fullcollect(void *stackTop)
                     bin = cast(Bins)pool.pagetable[pn];
                     if (bin < B_PAGE) {
                         if (opts.options.conservative)
-                            mark_conservative(o, o + binsize[bin]);
+                            mark_conservative_range(o, o + binsize[bin]);
                         else {
                             auto end_of_blk = cast(size_t**)(o +
                                     binsize[bin] - size_t.sizeof);
                             size_t* pm_bitmask = *end_of_blk;
-                            mark(o, end_of_blk, pm_bitmask);
+                            mark_range(o, end_of_blk, pm_bitmask);
                         }
                     }
                     else if (bin == B_PAGE || bin == B_PAGEPLUS)
@@ -905,12 +905,12 @@ size_t fullcollect(void *stackTop)
 
                         size_t blk_size = u * PAGESIZE;
                         if (opts.options.conservative)
-                            mark_conservative(o, o + blk_size);
+                            mark_conservative_range(o, o + blk_size);
                         else {
                             auto end_of_blk = cast(size_t**)(o + blk_size -
                                     size_t.sizeof);
                             size_t* pm_bitmask = *end_of_blk;
-                            mark(o, end_of_blk, pm_bitmask);
+                            mark_range(o, end_of_blk, pm_bitmask);
                         }
                     }
                 }
@@ -920,8 +920,6 @@ size_t fullcollect(void *stackTop)
 
     thread_resumeAll();
     gc.stats.world_started();
-
-    return sweep();
 }
 
 
