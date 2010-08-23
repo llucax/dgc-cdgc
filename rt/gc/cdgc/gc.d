@@ -921,13 +921,22 @@ size_t fullcollect(void *stackTop)
     thread_resumeAll();
     gc.stats.world_started();
 
+    return sweep();
+}
+
+
+/**
+ *
+ */
+size_t sweep()
+{
     // Free up everything not marked
-    debug(COLLECT_PRINTF) printf("\tfree'ing\n");
+    debug(COLLECT_PRINTF) printf("\tsweep\n");
     size_t freedpages = 0;
     size_t freed = 0;
-    for (n = 0; n < gc.pools.length; n++)
+    for (size_t n = 0; n < gc.pools.length; n++)
     {
-        pool = gc.pools[n];
+        Pool* pool = gc.pools[n];
         pool.clear_cache();
         uint*  bbase = pool.mark.base();
         size_t pn;
@@ -1039,9 +1048,9 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
     // Free complete pages, rebuild free list
     debug(COLLECT_PRINTF) printf("\tfree complete pages\n");
     size_t recoveredpages = 0;
-    for (n = 0; n < gc.pools.length; n++)
+    for (size_t n = 0; n < gc.pools.length; n++)
     {
-        pool = gc.pools[n];
+        Pool* pool = gc.pools[n];
         for (size_t pn = 0; pn < pool.npages; pn++)
         {
             Bins   bin = cast(Bins)pool.pagetable[pn];
