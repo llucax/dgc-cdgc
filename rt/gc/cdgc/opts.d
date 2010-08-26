@@ -186,6 +186,33 @@ unittest
         assert (conservative == true);
         assert (fork == false);
     }
+    parse("");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+    }
+    parse(":");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+    }
+    parse("::::");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+    }
 }
 
 
