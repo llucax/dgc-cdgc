@@ -2093,8 +2093,9 @@ void sentinel_init(void *p, size_t size)
 
 void sentinel_Invariant(void *p)
 {
-    assert(*sentinel_pre(p) == SENTINEL_PRE);
-    assert(*sentinel_post(p) == SENTINEL_POST);
+    if (*sentinel_pre(p) != SENTINEL_PRE ||
+            *sentinel_post(p) != SENTINEL_POST)
+        cstdlib.abort();
 }
 
 
