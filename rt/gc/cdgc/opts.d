@@ -52,6 +52,7 @@ struct Options
     bool sentinel = false;
     bool mem_stomp = false;
     bool conservative = false;
+    bool fork = true;
 }
 
 package Options options;
@@ -87,6 +88,8 @@ void process_option(char* opt_name, char* opt_value)
         options.mem_stomp = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "conservative"))
         options.conservative = parse_bool(opt_value);
+    else if (cstr_eq(opt_name, "no_fork"))
+        options.fork = !parse_bool(opt_value);
 }
 
 
@@ -145,6 +148,7 @@ unittest
         assert (sentinel == false);
         assert (mem_stomp == false);
         assert (conservative == false);
+        assert (fork == true);
     }
     parse("mem_stomp");
     with (options) {
@@ -153,14 +157,16 @@ unittest
         assert (sentinel == false);
         assert (mem_stomp == true);
         assert (conservative == false);
+        assert (fork == true);
     }
-    parse("mem_stomp=0:verbose=2:conservative");
+    parse("mem_stomp=0:verbose=2:conservative:no_fork=10");
     with (options) {
         assert (verbose == 2);
         assert (log_file[0] == '\0');
         assert (sentinel == false);
         assert (mem_stomp == false);
         assert (conservative == true);
+        assert (fork == false);
     }
     parse("log_file=12345 67890:verbose=1:sentinel=4:mem_stomp=1");
     with (options) {
@@ -169,6 +175,7 @@ unittest
         assert (sentinel == true);
         assert (mem_stomp == true);
         assert (conservative == true);
+        assert (fork == false);
     }
     parse(null);
     with (options) {
@@ -177,6 +184,7 @@ unittest
         assert (sentinel == true);
         assert (mem_stomp == true);
         assert (conservative == true);
+        assert (fork == false);
     }
 }
 

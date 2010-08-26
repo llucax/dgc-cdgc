@@ -768,7 +768,40 @@ size_t fullcollectshell()
 size_t fullcollect(void *stackTop)
 {
     debug(COLLECT_PRINTF) printf("Gcx.fullcollect()\n");
+
+    // we always need to stop the world to make threads save the CPU registers
+    // in the stack and prepare themselves for thread_scanAll()
+    thread_suspendAll();
+    gc.stats.world_stopped();
+
+    if (opts.options.fork) {
+        os.pid_t child_pid = os.fork();
+        assert (child_pid != -1); // don't accept errors in non-release mode
+        switch (child_pid) {
+        case -1: // if fork() fails, fallback to stop-the-world
+            opts.options.fork = false;
+            break;
+        case 0: // child process (i.e. the collectors mark phase)
+            mark(stackTop);
+            cstdlib.exit(0);
+            break; // bogus, will never reach here
+        default: // parent process (i.e. the mutator)
+            // start the world again and wait for the mark phase to finish
+            thread_resumeAll();
+            gc.stats.world_started();
+            int status = void;
+            os.pid_t wait_pid = os.waitpid(child_pid, &status, 0);
+            assert (wait_pid == child_pid);
+            return sweep();
+        }
+
+    }
+
+    // if we reach here, we are using the standard stop-the-world collection
     mark(stackTop);
+    thread_resumeAll();
+    gc.stats.world_started();
+
     return sweep();
 }
 
@@ -779,9 +812,6 @@ size_t fullcollect(void *stackTop)
 void mark(void *stackTop)
 {
     debug(COLLECT_PRINTF) printf("\tmark()\n");
-
-    thread_suspendAll();
-    gc.stats.world_stopped();
 
     gc.p_cache = null;
     gc.size_cache = 0;
@@ -917,9 +947,6 @@ void mark(void *stackTop)
             }
         }
     }
-
-    thread_resumeAll();
-    gc.stats.world_started();
 }
 
 
@@ -1176,6 +1203,9 @@ void initialize()
     int dummy;
     gc.stack_bottom = cast(char*)&dummy;
     opts.parse(cstdlib.getenv("D_GC_OPTS"));
+    // If we are going to fork, make sure we have the needed OS support
+    if (opts.options.fork)
+        opts.options.fork = os.HAVE_SHARED && os.HAVE_FORK;
     gc.lock = GCLock.classinfo;
     gc.inited = 1;
     setStackBottom(rt_stackBottom());
@@ -1866,10 +1896,18 @@ struct Pool
         //assert(baseAddr);
         topAddr = baseAddr + poolsize;
 
-        mark.alloc(cast(size_t)poolsize / 16);
-        scan.alloc(cast(size_t)poolsize / 16);
-        freebits.alloc(cast(size_t)poolsize / 16);
-        noscan.alloc(cast(size_t)poolsize / 16);
+        size_t nbits = cast(size_t)poolsize / 16;
+
+        // if the GC will run in parallel in a fork()ed process, we need to
+        // share the mark bits
+        os.Vis vis = os.Vis.PRIV;
+        if (opts.options.fork)
+            vis = os.Vis.SHARED;
+        mark.alloc(nbits, vis); // shared between mark and sweep
+        freebits.alloc(nbits, vis); // ditto
+        scan.alloc(nbits); // only used in the mark phase
+        finals.alloc(nbits); // mark phase *MUST* have a snapshot
+        noscan.alloc(nbits); // ditto
 
         pagetable = cast(ubyte*) cstdlib.malloc(npages);
         if (!pagetable)
@@ -1900,9 +1938,12 @@ struct Pool
         if (pagetable)
             cstdlib.free(pagetable);
 
-        mark.Dtor();
+        os.Vis vis = os.Vis.PRIV;
+        if (opts.options.fork)
+            vis = os.Vis.SHARED;
+        mark.Dtor(vis);
+        freebits.Dtor(vis);
         scan.Dtor();
-        freebits.Dtor();
         finals.Dtor();
         noscan.Dtor();
     }
