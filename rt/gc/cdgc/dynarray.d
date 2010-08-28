@@ -102,12 +102,14 @@ public:
     /**
      * Access an element by index.
      *
-     * A pointer is returned so the real element can be modified in place.
+     * Bear in mind that a copy of the element is returned. If you need
+     * a pointer, you can always get it through a.ptr + i (but be careful if
+     * you use the insert_sorted() method).
      */
-    T* opIndex(size_t i)
+    T opIndex(size_t i)
     {
         assert (i < this._size);
-        return this._data + i;
+        return this._data[i];
     }
 
     /**
@@ -115,9 +117,9 @@ public:
      *
      * This can trigger an allocation if the array is not big enough.
      *
-     * Returns true if the append was successful, false otherwise (i.e. an
-     * allocation was triggered but the allocation failed) in which case the
-     * internal state is not changed.
+     * Returns a pointer to the newly appended element if the append was
+     * successful, null otherwise (i.e. an allocation was triggered but the
+     * allocation failed) in which case the internal state is not changed.
      */
     T* append(in T x)
     {
@@ -130,25 +132,35 @@ public:
     }
 
     /**
-     * Append a copy of the element x at the end of the array.
+     * Insert an element preserving the array sorted.
      *
-     * This can trigger an allocation if the array is not big enough.
+     * This assumes the array was previously sorted. The "cmp" template
+     * argument can be used to specify a custom comparison expression as "a"
+     * string (where a is the element in the array and "b" is the element
+     * passed as a parameter "x"). Using a template to specify the comparison
+     * method is a hack to cope with compilers that have trouble inlining
+     * a delegate (i.e. DMD).
      *
-     * Returns true if the append was successful, false otherwise (i.e. an
-     * allocation was triggered but the allocation failed) in which case the
-     * internal state is not changed.
+     * This can trigger an allocation if the array is not big enough and moves
+     * memory around, so you have to be specially careful if you are taking
+     * pointers into the array's data.
+     *
+     * Returns a pointer to the newly inserted element if the append was
+     * successful, null otherwise (i.e. an allocation was triggered but the
+     * allocation failed) in which case the internal state is not changed.
      */
-    T* insert_sorted(in T x)
+    T* insert_sorted(char[] cmp = "a < b")(in T x)
     {
         size_t i = 0;
         for (; i < this._size; i++) {
-            if (this._data[i] < x)
+            T a = this._data[i];
+            alias x b;
+            if (mixin(cmp))
                 continue;
             break;
         }
-        if (this._size == this._capacity)
-            if (!this.resize())
-                return null;
+        if ((this._size == this._capacity) && !this.resize())
+            return null;
         memmove(this._data + i + 1, this._data + i,
                 (this._size - i) * T.sizeof);
         this._data[i] = x;

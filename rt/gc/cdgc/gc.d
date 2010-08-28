@@ -155,7 +155,8 @@ alias ubyte Bins;
 
 struct List
 {
-    List *next;
+    List* next;
+    Pool* pool;
 }
 
 
@@ -210,7 +211,7 @@ struct GC
 
     dynarray.DynArray!(void*) roots;
     dynarray.DynArray!(Range) ranges;
-    dynarray.DynArray!(Pool) pools;
+    dynarray.DynArray!(Pool*) pools;
 
     Stats stats;
 }
@@ -236,7 +237,7 @@ bool Invariant()
             if (i == 0)
                 assert(gc.min_addr == pool.baseAddr);
             if (i + 1 < gc.pools.length)
-                assert(*pool < gc.pools[i + 1]);
+                assert(*pool < *gc.pools[i + 1]);
             else if (i + 1 == gc.pools.length)
                 assert(gc.max_addr == pool.topAddr);
         }
@@ -250,10 +251,14 @@ bool Invariant()
             assert(gc.ranges[i].pbot <= gc.ranges[i].ptop);
         }
 
-        for (size_t i = 0; i < B_PAGE; i++)
-            for (List *list = gc.free_list[i]; list; list = list.next)
-            {
+        for (size_t i = 0; i < B_PAGE; i++) {
+            for (List *list = gc.free_list[i]; list; list = list.next) {
+                assert (list.pool !is null);
+                auto p = cast(byte*) list;
+                assert (p >= list.pool.baseAddr);
+                assert (p < list.pool.topAddr);
             }
+        }
     }
     return true;
 }
@@ -406,6 +411,7 @@ void minimize()
         if (pn < pool.npages)
             continue;
         pool.Dtor();
+        cstdlib.free(pool);
         gc.pools.remove_at(n);
         n--;
     }
@@ -418,9 +424,8 @@ void minimize()
  * Allocate a chunk of memory that is larger than a page.
  * Return null if out of memory.
  */
-void *bigAlloc(size_t size)
+void* bigAlloc(size_t size, out Pool* pool)
 {
-    Pool*  pool;
     size_t npages;
     size_t n;
     size_t pn;
@@ -532,20 +537,24 @@ Pool *newPool(size_t npages)
             npages = n;
     }
 
-    Pool p;
-    p.initialize(npages);
-    if (!p.baseAddr)
+    auto pool = cast(Pool*) cstdlib.calloc(1, Pool.sizeof);
+    if (pool is null)
+        return null;
+    pool.initialize(npages);
+    if (!pool.baseAddr)
     {
-        p.Dtor();
+        pool.Dtor();
         return null;
     }
 
-    Pool* pool = gc.pools.insert_sorted(p);
-    if (pool)
-    {
-        gc.min_addr = gc.pools[0].baseAddr;
-        gc.max_addr = gc.pools[gc.pools.length - 1].topAddr;
+    auto inserted_pool = *gc.pools.insert_sorted!("*a < *b")(pool);
+    if (inserted_pool is null) {
+        pool.Dtor();
+        return null;
     }
+    assert (inserted_pool is pool);
+    gc.min_addr = gc.pools[0].baseAddr;
+    gc.max_addr = gc.pools[gc.pools.length - 1].topAddr;
     return pool;
 }
 
@@ -577,14 +586,16 @@ int allocPage(Bins bin)
 
     // Convert page to free list
     size_t size = binsize[bin];
-    List **b = &gc.free_list[bin];
+    auto list_head = &gc.free_list[bin];
 
     p = pool.baseAddr + pn * PAGESIZE;
     ptop = p + PAGESIZE;
     for (; p < ptop; p += size)
     {
-        (cast(List *)p).next = *b;
-        *b = cast(List *)p;
+        List* l = cast(List *) p;
+        l.next = *list_head;
+        l.pool = pool;
+        *list_head = l;
     }
     return 1;
 }
@@ -830,9 +841,13 @@ void mark(void *stackTop)
     {
         for (List *list = gc.free_list[n]; list; list = list.next)
         {
-            Pool* pool = findPool(list);
-            assert(pool);
-            pool.freebits.set(cast(size_t)(cast(byte*)list - pool.baseAddr) / 16);
+            Pool* pool = list.pool;
+            auto ptr = cast(byte*) list;
+            assert (pool);
+            assert (pool.baseAddr <= ptr);
+            assert (ptr < pool.topAddr);
+            size_t bit_i = cast(size_t)(ptr - pool.baseAddr) / 16;
+            pool.freebits.set(bit_i);
         }
     }
 
@@ -1107,10 +1122,14 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     bit_i = bit_base + u / 16;
                     if (pool.freebits.test(bit_i))
                     {
-                        List *list = cast(List *)(p + u);
-                        // avoid unnecessary writes
+                        assert ((p+u) >= pool.baseAddr);
+                        assert ((p+u) < pool.topAddr);
+                        List* list = cast(List*) (p + u);
+                        // avoid unnecesary writes (it really saves time)
                         if (list.next != gc.free_list[bin])
                             list.next = gc.free_list[bin];
+                        if (list.pool != pool)
+                            list.pool = pool;
                         gc.free_list[bin] = list;
                     }
                 }
@@ -1247,7 +1266,8 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
         lastbin = bin;
     }
 
-    size_t capacity; // to figure out where to store the bitmask
+    Pool* pool = void;
+    size_t capacity = void; // to figure out where to store the bitmask
     if (bin < B_PAGE)
     {
         p = gc.free_list[bin];
@@ -1283,7 +1303,11 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
         capacity = binsize[bin];
 
         // Return next item from free list
-        gc.free_list[bin] = (cast(List*)p).next;
+        List* list = cast(List*) p;
+        assert ((cast(byte*)list) >= list.pool.baseAddr);
+        assert ((cast(byte*)list) < list.pool.topAddr);
+        gc.free_list[bin] = list.next;
+        pool = list.pool;
         if (!(attrs & BlkAttr.NO_SCAN))
             memset(p + size, 0, capacity - size);
         if (opts.options.mem_stomp)
@@ -1291,9 +1315,10 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
     }
     else
     {
-        p = bigAlloc(size);
+        p = bigAlloc(size, pool);
         if (!p)
             onOutOfMemoryError();
+        assert (pool !is null);
         // Round the size up to the number of pages needed to store it
         size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
         capacity = npages * PAGESIZE;
@@ -1314,12 +1339,8 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
     }
 
     if (attrs)
-    {
-        Pool *pool = findPool(p);
-        assert(pool);
-
         setAttr(pool, cast(size_t)(p - pool.baseAddr) / 16, attrs);
-    }
+
     return p;
 }
 
@@ -1604,6 +1625,7 @@ private void free(void *p)
             memset(p, 0xF2, binsize[bin]);
 
         list.next = gc.free_list[bin];
+        list.pool = pool;
         gc.free_list[bin] = list;
     }
 }
