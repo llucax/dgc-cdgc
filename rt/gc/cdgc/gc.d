@@ -398,7 +398,7 @@ void minimize()
 {
     size_t n;
     size_t pn;
-    Pool*  pool;
+    Pool* pool;
 
     for (n = 0; n < gc.pools.length; n++)
     {
@@ -1003,13 +1003,11 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     {
                         if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
                             if (opts.options.sentinel)
-                                rt_finalize(cast(List *)sentinel_add(p), false/*gc.no_stack > 0*/);
+                                rt_finalize(sentinel_add(p), false/*gc.no_stack > 0*/);
                             else
-                                rt_finalize(cast(List *)p, false/*gc.no_stack > 0*/);
+                                rt_finalize(p, false/*gc.no_stack > 0*/);
                         }
                         clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
-
-                        List *list = cast(List *)p;
 
                         if (opts.options.mem_stomp)
                             memset(p, 0xF3, size);
@@ -1029,13 +1027,11 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                         pool.freebits.set(bit_i);
                         if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
                             if (opts.options.sentinel)
-                                rt_finalize(cast(List *)sentinel_add(p), false/*gc.no_stack > 0*/);
+                                rt_finalize(sentinel_add(p), false/*gc.no_stack > 0*/);
                             else
-                                rt_finalize(cast(List *)p, false/*gc.no_stack > 0*/);
+                                rt_finalize(p, false/*gc.no_stack > 0*/);
                         }
                         clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
-
-                        List *list = cast(List *)p;
 
                         if (opts.options.mem_stomp)
                             memset(p, 0xF3, size);
@@ -1294,6 +1290,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
             if (!gc.free_list[bin] && !allocPage(bin))
             {
                 newPool(1);         // allocate new pool to find a new page
+                // TODO: hint allocPage() to use the pool we just created
                 int result = allocPage(bin);
                 if (!result)
                     onOutOfMemoryError();
@@ -1619,7 +1616,7 @@ private void free(void *p)
     else
     {
         // Add to free list
-        List *list = cast(List*)p;
+        List* list = cast(List*) p;
 
         if (opts.options.mem_stomp)
             memset(p, 0xF2, binsize[bin]);
@@ -1716,9 +1713,7 @@ private void checkNoSync(void *p)
             if (bin < B_PAGE)
             {
                 // Check that p is not on a free list
-                List *list;
-
-                for (list = gc.free_list[bin]; list; list = list.next)
+                for (List* list = gc.free_list[bin]; list; list = list.next)
                 {
                     assert(cast(void*)list != p);
                 }
@@ -1784,7 +1779,7 @@ private GCStats getStats()
 
     for (n = 0; n < B_PAGE; n++)
     {
-        for (List *list = gc.free_list[n]; list; list = list.next)
+        for (List* list = gc.free_list[n]; list; list = list.next)
             flsize += binsize[n];
     }
 
@@ -1915,7 +1910,6 @@ struct Pool
             npages = 0;
             poolsize = 0;
         }
-        //assert(baseAddr);
         topAddr = baseAddr + poolsize;
 
         size_t nbits = cast(size_t)poolsize / 16;
