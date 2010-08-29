@@ -641,7 +641,7 @@ void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
             if (pool)
             {
                 size_t offset = cast(size_t)(p - pool.baseAddr);
-                size_t bit_i;
+                size_t bit_i = void;
                 size_t pn = offset / PAGESIZE;
                 Bins   bin = cast(Bins)pool.pagetable[pn];
 
