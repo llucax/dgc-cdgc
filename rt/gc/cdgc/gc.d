@@ -645,6 +645,10 @@ void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
                 size_t pn = offset / PAGESIZE;
                 Bins   bin = cast(Bins)pool.pagetable[pn];
 
+                // Cache B_PAGE, B_PAGEPLUS and B_FREE lookups
+                if (bin >= B_PAGE)
+                    pcache = cast(size_t)p & ~(PAGESIZE-1);
+
                 // Adjust bit to be at start of allocated memory block
                 if (bin <= B_PAGE)
                     bit_i = (offset & notbinsize[bin]) >> 4;
@@ -657,14 +661,8 @@ void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
                     while (cast(Bins)pool.pagetable[pn] == B_PAGEPLUS);
                     bit_i = pn * (PAGESIZE / 16);
                 }
-                else
-                {
-                    // Don't mark bits in B_FREE pages
+                else // Don't mark bits in B_FREE pages
                     continue;
-                }
-
-                if (bin >= B_PAGE) // Cache B_PAGE and B_PAGEPLUS lookups
-                    pcache = cast(size_t)p & ~(PAGESIZE-1);
 
                 if (!pool.mark.test(bit_i))
                 {
