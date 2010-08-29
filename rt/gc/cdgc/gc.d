@@ -651,7 +651,7 @@ void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
 
                 // Adjust bit to be at start of allocated memory block
                 if (bin <= B_PAGE)
-                    bit_i = (offset & notbinsize[bin]) >> 4;
+                    bit_i = (offset & notbinsize[bin]) / 16;
                 else if (bin == B_PAGEPLUS)
                 {
                     do
