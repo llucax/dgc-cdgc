@@ -615,7 +615,7 @@ void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
     void **p1 = cast(void **)pbot;
     void **p2 = cast(void **)ptop;
     size_t pcache = 0;
-    uint changes = 0;
+    bool changes = false;
 
     size_t type_size = pm_bitmask[0];
     size_t* pm_bits = pm_bitmask + 1;
@@ -670,7 +670,7 @@ void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
                     if (!pool.noscan.test(bit_i))
                     {
                         pool.scan.set(bit_i);
-                        changes = 1;
+                        changes = true;
                     }
                 }
             }
