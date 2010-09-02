@@ -1432,10 +1432,13 @@ private void *realloc(void *p, size_t size, uint attrs,
                         memset(p + size - pm_bitmask_size, 0xF2,
                                 blk_size - size - pm_bitmask_size);
                     pool.freePages(pagenum + newsz, psz - newsz);
+                    auto new_blk_size = (PAGESIZE * newsz);
+                    // update the size cache, assuming that is very likely the
+                    // size of this block will be queried in the near future
+                    pool.update_cache(p, new_blk_size);
                     if (has_pm) {
-                        auto end_of_blk = cast(size_t**)(
-                                blk_base_addr + (PAGESIZE * newsz) -
-                                pm_bitmask_size);
+                        auto end_of_blk = cast(size_t**)(blk_base_addr +
+                                new_blk_size - pm_bitmask_size);
                         *end_of_blk = pm_bitmask;
                     }
                     return p;
@@ -1453,10 +1456,14 @@ private void *realloc(void *p, size_t size, uint attrs,
                                         - pm_bitmask_size);
                             memset(pool.pagetable + pagenum +
                                     psz, B_PAGEPLUS, newsz - psz);
+                            auto new_blk_size = (PAGESIZE * newsz);
+                            // update the size cache, assuming that is very
+                            // likely the size of this block will be queried in
+                            // the near future
+                            pool.update_cache(p, new_blk_size);
                             if (has_pm) {
                                 auto end_of_blk = cast(size_t**)(
-                                        blk_base_addr +
-                                        (PAGESIZE * newsz) -
+                                        blk_base_addr + new_blk_size -
                                         pm_bitmask_size);
                                 *end_of_blk = pm_bitmask;
                             }
@@ -1565,6 +1572,9 @@ body
     memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
     gc.p_cache = null;
     gc.size_cache = 0;
+    // update the size cache, assuming that is very likely the size of this
+    // block will be queried in the near future
+    pool.update_cache(p, new_size);
 
     if (has_pm) {
         new_size -= size_t.sizeof;
@@ -1610,6 +1620,8 @@ private void free(void *p)
         if (opts.options.mem_stomp)
             memset(p, 0xF2, npages * PAGESIZE);
         pool.freePages(pagenum, npages);
+        // just in case we were caching this pointer
+        pool.clear_cache(p);
     }
     else
     {
@@ -1888,10 +1900,18 @@ struct Pool
     size_t cached_size;
     void* cached_ptr;
 
-    void clear_cache()
+    void clear_cache(void* ptr = null)
     {
-        this.cached_ptr = null;
-        this.cached_size = 0;
+        if (ptr is null || ptr is this.cached_ptr) {
+            this.cached_ptr = null;
+            this.cached_size = 0;
+        }
+    }
+
+    void update_cache(void* ptr, size_t size)
+    {
+        this.cached_ptr = ptr;
+        this.cached_size = size;
     }
 
     void initialize(size_t npages)
