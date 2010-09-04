@@ -307,6 +307,8 @@ BlkInfo getInfo(void* p)
         return BlkInfo.init;
     BlkInfo info;
     info.base = pool.findBase(p);
+    if (info.base is null)
+        return BlkInfo.init;
     info.size = pool.findSize(info.base);
     info.attr = getAttr(pool, cast(size_t)(info.base - pool.baseAddr) / 16u);
     if (has_pointermap(info.attr)) {
