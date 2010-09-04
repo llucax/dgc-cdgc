@@ -83,9 +83,8 @@ struct GCBits
     invariant
     {
         if (data)
-        {
-            assert(nwords * data[0].sizeof * 8 >= nbits);
-        }
+            assert (nwords ==
+                    ((nbits + (BITS_PER_WORD - 1)) >> BITS_SHIFT));
     }
 
     void alloc(size_t nbits, os.Vis vis = os.Vis.PRIV)
