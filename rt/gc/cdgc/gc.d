@@ -1000,7 +1000,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                 {
                     for (; p < ptop; p += size, bit_i += bit_stride)
                     {
-                        if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
+                        if (pool.finals.testClear(bit_i)) {
                             if (opts.options.sentinel)
                                 rt_finalize(sentinel_add(p), false/*gc.no_stack > 0*/);
                             else
@@ -1024,7 +1024,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                             sentinel_Invariant(sentinel_add(p));
 
                         pool.freebits.set(bit_i);
-                        if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
+                        if (pool.finals.testClear(bit_i)) {
                             if (opts.options.sentinel)
                                 rt_finalize(sentinel_add(p), false/*gc.no_stack > 0*/);
                             else
@@ -1047,7 +1047,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     byte *p = pool.baseAddr + pn * PAGESIZE;
                     if (opts.options.sentinel)
                         sentinel_Invariant(sentinel_add(p));
-                    if (pool.finals.nbits && pool.finals.testClear(bit_i)) {
+                    if (pool.finals.testClear(bit_i)) {
                         if (opts.options.sentinel)
                             rt_finalize(sentinel_add(p), false/*gc.no_stack > 0*/);
                         else
@@ -1150,14 +1150,11 @@ in
 body
 {
     uint attrs;
-
-    if (pool.finals.nbits &&
-        pool.finals.test(bit_i))
+    if (pool.finals.test(bit_i))
         attrs |= BlkAttr.FINALIZE;
     if (pool.noscan.test(bit_i))
         attrs |= BlkAttr.NO_SCAN;
-//        if (pool.nomove.nbits &&
-//            pool.nomove.test(bit_i))
+//        if (pool.nomove.test(bit_i))
 //            attrs |= BlkAttr.NO_MOVE;
     return attrs;
 }
@@ -1175,8 +1172,6 @@ body
 {
     if (mask & BlkAttr.FINALIZE)
     {
-        if (!pool.finals.nbits)
-            pool.finals.alloc(pool.mark.nbits);
         pool.finals.set(bit_i);
     }
     if (mask & BlkAttr.NO_SCAN)
@@ -1202,7 +1197,7 @@ in
 }
 body
 {
-    if (mask & BlkAttr.FINALIZE && pool.finals.nbits)
+    if (mask & BlkAttr.FINALIZE)
         pool.finals.clear(bit_i);
     if (mask & BlkAttr.NO_SCAN)
         pool.noscan.clear(bit_i);
