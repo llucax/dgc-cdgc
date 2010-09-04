@@ -824,9 +824,6 @@ void mark(void *stackTop)
 {
     debug(COLLECT_PRINTF) printf("\tmark()\n");
 
-    gc.p_cache = null;
-    gc.size_cache = 0;
-
     gc.any_changes = false;
     for (size_t n = 0; n < gc.pools.length; n++)
     {
@@ -972,6 +969,8 @@ size_t sweep()
 {
     // Free up everything not marked
     debug(COLLECT_PRINTF) printf("\tsweep\n");
+    gc.p_cache = null;
+    gc.size_cache = 0;
     size_t freedpages = 0;
     size_t freed = 0;
     for (size_t n = 0; n < gc.pools.length; n++)
