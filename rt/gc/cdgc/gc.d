@@ -254,10 +254,12 @@ bool Invariant()
 
         for (size_t i = 0; i < B_PAGE; i++) {
             for (List *list = gc.free_list[i]; list; list = list.next) {
-                assert (list.pool !is null);
+                auto pool = list.pool;
+                assert (pool !is null);
                 auto p = cast(byte*) list;
-                assert (p >= list.pool.baseAddr);
-                assert (p < list.pool.topAddr);
+                assert (p >= pool.baseAddr);
+                assert (p < pool.topAddr);
+                assert (pool.freebits.test((p - pool.baseAddr) / 16));
             }
         }
     }
@@ -311,7 +313,8 @@ BlkInfo getInfo(void* p)
     if (info.base is null)
         return BlkInfo.init;
     info.size = pool.findSize(info.base);
-    info.attr = getAttr(pool, cast(size_t)(info.base - pool.baseAddr) / 16u);
+    size_t bit_i = (info.base - pool.baseAddr) / 16;
+    info.attr = getAttr(pool, bit_i);
     if (has_pointermap(info.attr)) {
         info.size -= size_t.sizeof; // PointerMap bitmask
         // Points to the PointerMap bitmask pointer, not user data
@@ -497,6 +500,8 @@ void* bigAlloc(size_t size, out Pool* pool)
     }
 
   L1:
+    size_t bit_i = pn * (PAGESIZE / 16);
+    pool.freebits.clear(bit_i);
     pool.pagetable[pn] = B_PAGE;
     if (npages > 1)
         memset(&pool.pagetable[pn + 1], B_PAGEPLUS, npages - 1);
@@ -570,12 +575,9 @@ Pool *newPool(size_t npages)
 int allocPage(Bins bin)
 {
     Pool*  pool;
-    size_t n;
     size_t pn;
-    byte*  p;
-    byte*  ptop;
 
-    for (n = 0; n < gc.pools.length; n++)
+    for (size_t n = 0; n < gc.pools.length; n++)
     {
         pool = gc.pools[n];
         pn = pool.allocPages(1);
@@ -591,14 +593,18 @@ int allocPage(Bins bin)
     size_t size = binsize[bin];
     auto list_head = &gc.free_list[bin];
 
-    p = pool.baseAddr + pn * PAGESIZE;
-    ptop = p + PAGESIZE;
-    for (; p < ptop; p += size)
+    byte* p = pool.baseAddr + pn * PAGESIZE;
+    byte*  ptop = p + PAGESIZE;
+    size_t bit_i = pn * (PAGESIZE / 16);
+    size_t bit_stride = size / 16;
+    for (; p < ptop; p += size, bit_i += bit_stride)
     {
         List* l = cast(List *) p;
         l.next = *list_head;
         l.pool = pool;
         *list_head = l;
+        // TODO: maybe this can be optimized to be set in chunks
+        pool.freebits.set(bit_i);
     }
     return 1;
 }
@@ -827,33 +833,12 @@ void mark(void *stackTop)
     debug(COLLECT_PRINTF) printf("\tmark()\n");
 
     gc.any_changes = false;
-    for (size_t n = 0; n < gc.pools.length; n++)
-    {
-        Pool* pool = gc.pools[n];
-        pool.mark.zero();
-        pool.scan.zero();
-        pool.freebits.zero();
-    }
-
-    // Mark each free entry, so it doesn't get scanned
-    for (size_t n = 0; n < B_PAGE; n++)
-    {
-        for (List *list = gc.free_list[n]; list; list = list.next)
-        {
-            Pool* pool = list.pool;
-            auto ptr = cast(byte*) list;
-            assert (pool);
-            assert (pool.baseAddr <= ptr);
-            assert (ptr < pool.topAddr);
-            size_t bit_i = cast(size_t)(ptr - pool.baseAddr) / 16;
-            pool.freebits.set(bit_i);
-        }
-    }
 
     for (size_t n = 0; n < gc.pools.length; n++)
     {
         Pool* pool = gc.pools[n];
         pool.mark.copy(&pool.freebits);
+        pool.scan.zero();
     }
 
     /// Marks a range of memory in conservative mode.
@@ -1043,7 +1028,8 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
             }
             else if (bin == B_PAGE)
             {
-                size_t bit_i = pn * (PAGESIZE / 16);
+                size_t bit_stride = PAGESIZE / 16;
+                size_t bit_i = pn * bit_stride;
                 if (!pool.mark.test(bit_i))
                 {
                     byte *p = pool.baseAddr + pn * PAGESIZE;
@@ -1059,6 +1045,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
 
                     debug(COLLECT_PRINTF) printf("\tcollecting big %x\n", p);
                     pool.pagetable[pn] = B_FREE;
+                    pool.freebits.set(bit_i);
                     freedpages++;
                     if (opts.options.mem_stomp)
                         memset(p, 0xF3, PAGESIZE);
@@ -1066,6 +1053,8 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     {
                         pn++;
                         pool.pagetable[pn] = B_FREE;
+                        bit_i += bit_stride;
+                        pool.freebits.set(bit_i);
                         freedpages++;
 
                         if (opts.options.mem_stomp)
@@ -1108,6 +1097,9 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     if (!pool.freebits.test(bit_i))
                         goto Lnotfree;
                 }
+                // we don't need to explicitly set the freebit here because all
+                // freebits were already set, including the bit used for the
+                // whole freed page (bit_base).
                 pool.pagetable[pn] = B_FREE;
                 recoveredpages++;
                 continue;
@@ -1259,6 +1251,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
     }
 
     Pool* pool = void;
+    size_t bit_i = void;
     size_t capacity = void; // to figure out where to store the bitmask
     if (bin < B_PAGE)
     {
@@ -1301,6 +1294,9 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
         assert ((cast(byte*)list) < list.pool.topAddr);
         gc.free_list[bin] = list.next;
         pool = list.pool;
+        bit_i = (p - pool.baseAddr) / 16;
+        assert (pool.freebits.test(bit_i));
+        pool.freebits.clear(bit_i);
         if (!(attrs & BlkAttr.NO_SCAN))
             memset(p + size, 0, capacity - size);
         if (opts.options.mem_stomp)
@@ -1315,6 +1311,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
         // Round the size up to the number of pages needed to store it
         size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
         capacity = npages * PAGESIZE;
+        bit_i = (p - pool.baseAddr) / 16;
     }
 
     // Store the bit mask AFTER SENTINEL_POST
@@ -1331,8 +1328,10 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
         sentinel_init(p, size);
     }
 
-    if (attrs)
-        setAttr(pool, cast(size_t)(p - pool.baseAddr) / 16, attrs);
+    if (attrs) {
+        setAttr(pool, bit_i, attrs);
+        assert (bin >= B_PAGE || !pool.freebits.test(bit_i));
+    }
 
     return p;
 }
@@ -1613,8 +1612,13 @@ private void free(void *p)
         // Free pages
         size_t npages = 1;
         size_t n = pagenum;
-        while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
+        pool.freebits.set(bit_i);
+        size_t bit_stride = PAGESIZE / 16;
+        while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS) {
             npages++;
+            bit_i += bit_stride;
+            pool.freebits.set(bit_i);
+        }
         if (opts.options.mem_stomp)
             memset(p, 0xF2, npages * PAGESIZE);
         pool.freePages(pagenum, npages);
@@ -1632,6 +1636,7 @@ private void free(void *p)
         list.next = gc.free_list[bin];
         list.pool = pool;
         gc.free_list[bin] = list;
+        pool.freebits.set(bit_i);
     }
 }
 
@@ -1936,10 +1941,10 @@ struct Pool
         if (opts.options.fork)
             vis = os.Vis.SHARED;
         mark.alloc(nbits, vis); // shared between mark and sweep
-        freebits.alloc(nbits, vis); // ditto
+        freebits.alloc(nbits); // not used by the mark phase
         scan.alloc(nbits); // only used in the mark phase
-        finals.alloc(nbits); // mark phase *MUST* have a snapshot
-        noscan.alloc(nbits); // ditto
+        finals.alloc(nbits); // not used by the mark phase
+        noscan.alloc(nbits); // mark phase *MUST* have a snapshot
 
         pagetable = cast(ubyte*) cstdlib.malloc(npages);
         if (!pagetable)
@@ -1974,7 +1979,7 @@ struct Pool
         if (opts.options.fork)
             vis = os.Vis.SHARED;
         mark.Dtor(vis);
-        freebits.Dtor(vis);
+        freebits.Dtor();
         scan.Dtor();
         finals.Dtor();
         noscan.Dtor();
