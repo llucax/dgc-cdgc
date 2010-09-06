@@ -50,6 +50,7 @@ import opts = rt.gc.cdgc.opts;
 
 import cstdlib = tango.stdc.stdlib;
 import cstring = tango.stdc.string;
+import cstdio = tango.stdc.stdio;
 
 /*
  * This is a small optimization that proved it's usefulness. For small chunks
@@ -786,6 +787,7 @@ size_t fullcollect(void *stackTop)
     gc.stats.world_stopped();
 
     if (opts.options.fork) {
+        cstdio.fflush(null); // avoid duplicated FILE* output
         os.pid_t child_pid = os.fork();
         assert (child_pid != -1); // don't accept errors in non-release mode
         switch (child_pid) {
