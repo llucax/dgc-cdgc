@@ -228,8 +228,8 @@ private:
     cstdio.FILE* start_file(char* filename, char* header)
     {
         cstdio.FILE* file = cstdio.fopen(filename, "w");
-        assert (file !is null);
-        cstdio.fputs(header, file);
+        if (file !is null)
+            cstdio.fputs(header, file);
         return file;
     }
 
@@ -298,22 +298,24 @@ public:
         Stats this_;
         this_.gc = gc;
         if (options.malloc_stats_file[0] != '\0') {
-            this_.active = true;
             this_.mallocs_file = this_.start_file(
                     options.malloc_stats_file.ptr,
                     "Timestamp,Time,Pointer,Size,Collection triggered,"
                     "Finalize,No scan,No move,Pointer map,Type size,"
                     "Pointer map scan bitmask (first word, hexa),"
                     "Pointer map pointer bitmask (first word, hexa)\n");
+            if (this_.mallocs_file !is null)
+                this_.active = true;
         }
         // collection
         if (options.collect_stats_file[0] != '\0') {
-            this_.active = true;
             this_.collections_file = this_.start_file(
                     options.collect_stats_file.ptr,
                     "Timestamp,Malloc time,Collection time,Stop-the-world time,"
                     "Used before,Free before,Wasted before,Overhead before,"
                     "Used after,Free after,Wasted after,Overhead after\n");
+            if (this_.collections_file !is null)
+                this_.active = true;
         }
         this_.program_start = this_.now();
         return this_;
