@@ -165,6 +165,23 @@ struct GCBits
         cstring.memset(data + 1, 0, nwords * uint.sizeof);
     }
 
+    void set_all()
+    {
+        cstring.memset(data + 1, 0xff, nwords * uint.sizeof);
+    }
+
+    void set_group(size_t base, size_t nbits)
+    in
+    {
+    }
+    body
+    {
+        assert ((base % 8) == 0);
+        assert ((nbits % 8) == 0);
+        size_t nbytes = nbits / 8;
+        cstring.memset(data + 1 + (base >> BITS_SHIFT), 0xff, nbytes);
+    }
+
     void copy(GCBits *f)
     in
     {

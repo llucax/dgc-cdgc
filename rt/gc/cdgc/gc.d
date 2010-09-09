@@ -51,6 +51,7 @@ import opts = rt.gc.cdgc.opts;
 import cstdlib = tango.stdc.stdlib;
 import cstring = tango.stdc.string;
 import cstdio = tango.stdc.stdio;
+debug(COLLECT_PRINTF) alias cstdio.printf printf;
 
 /*
  * This is a small optimization that proved it's usefulness. For small chunks
@@ -201,6 +202,9 @@ struct GC
     uint inited;
     /// Turn off collections if > 0
     int disabled;
+
+    // PID of the fork()ed process doing the mark() (0 if is not running)
+    int mark_proc_pid;
 
     /// min(pool.baseAddr)
     byte *min_addr;
@@ -402,6 +406,11 @@ size_t reserve(size_t size)
  */
 void minimize()
 {
+    // Disabled if a parallel collection is in progress because the shared mark
+    // bits of the freed pool might be used by the mark process
+    if (gc.mark_proc_pid != 0)
+        return;
+
     size_t n;
     size_t pn;
     Pool* pool;
@@ -596,15 +605,13 @@ int allocPage(Bins bin)
     byte* p = pool.baseAddr + pn * PAGESIZE;
     byte*  ptop = p + PAGESIZE;
     size_t bit_i = pn * (PAGESIZE / 16);
-    size_t bit_stride = size / 16;
-    for (; p < ptop; p += size, bit_i += bit_stride)
+    pool.freebits.set_group(bit_i, PAGESIZE / 16);
+    for (; p < ptop; p += size)
     {
         List* l = cast(List *) p;
         l.next = *list_head;
         l.pool = pool;
         *list_head = l;
-        // TODO: maybe this can be optimized to be set in chunks
-        pool.freebits.set(bit_i);
     }
     return 1;
 }
@@ -787,18 +794,56 @@ size_t fullcollect(void *stackTop)
 {
     debug(COLLECT_PRINTF) printf("Gcx.fullcollect()\n");
 
-    // we always need to stop the world to make threads save the CPU registers
+    // If eager allocation is used, we need to check first if there is a mark
+    // process running. If there isn't, we start a new one (see the next code
+    // block). If there is, we check if it's still running or already finished.
+    // If it's still running, we tell the caller process no memory has been
+    // recovered (it will allocated more to fulfill the current request).  If
+    // the mark process is done, we lunch the sweep phase and hope enough
+    // memory is freed (if that not the case, the caller will allocate more
+    // memory and the next time it's exhausted it will run a new collection).
+    if (opts.options.eager_alloc) {
+        if (gc.mark_proc_pid != 0) { // there is a mark process in progress
+            os.WRes r = os.wait_pid(gc.mark_proc_pid, false); // don't block
+            assert (r != os.WRes.ERROR);
+            switch (r) {
+            case os.WRes.DONE:
+                debug(COLLECT_PRINTF) printf("\t\tmark proc DONE\n");
+                gc.mark_proc_pid = 0;
+                return sweep();
+            case os.WRes.RUNNING:
+                debug(COLLECT_PRINTF) printf("\t\tmark proc RUNNING\n");
+                return 0;
+            case os.WRes.ERROR:
+                debug(COLLECT_PRINTF) printf("\t\tmark proc ERROR\n");
+                disable_fork(); // Try to keep going without forking
+                break;
+            }
+        }
+    }
+
+    // We always need to stop the world to make threads save the CPU registers
     // in the stack and prepare themselves for thread_scanAll()
     thread_suspendAll();
     gc.stats.world_stopped();
 
+    // If forking is enabled, we fork() and start a new mark phase in the
+    // child. The parent process will tell the caller that no memory could be
+    // recycled if eager allocation is used, allowing the mutator to keep going
+    // almost instantly (at the expense of more memory consumption because
+    // a new allocation will be triggered to fulfill the current request). If
+    // no eager allocation is used, the parent will wait for the mark phase to
+    // finish before returning control to the mutator, but other threads are
+    // restarted and may run in parallel with the mark phase (unless they
+    // allocate or use the GC themselves, in which case the global GC lock will
+    // stop them).
     if (opts.options.fork) {
         cstdio.fflush(null); // avoid duplicated FILE* output
         os.pid_t child_pid = os.fork();
         assert (child_pid != -1); // don't accept errors in non-release mode
         switch (child_pid) {
-        case -1: // if fork() fails, fallback to stop-the-world
-            opts.options.fork = false;
+        case -1: // if fork() fails, fall-back to stop-the-world
+            disable_fork();
             break;
         case 0: // child process (i.e. the collectors mark phase)
             mark(stackTop);
@@ -808,15 +853,28 @@ size_t fullcollect(void *stackTop)
             // start the world again and wait for the mark phase to finish
             thread_resumeAll();
             gc.stats.world_started();
-            int status = void;
-            os.pid_t wait_pid = os.waitpid(child_pid, &status, 0);
-            assert (wait_pid == child_pid);
-            return sweep();
+            if (opts.options.eager_alloc) {
+                gc.mark_proc_pid = child_pid;
+                return 0;
+            }
+            os.WRes r = os.wait_pid(child_pid); // block until it finishes
+            assert (r == os.WRes.DONE);
+            debug(COLLECT_PRINTF) printf("\t\tmark proc DONE (block)\n");
+            if (r == os.WRes.DONE)
+                return sweep();
+            debug(COLLECT_PRINTF) printf("\tmark() proc ERROR\n");
+            // If there was some error, try to keep going without forking
+            disable_fork();
+            // Re-suspend the threads to do the marking in this process
+            thread_suspendAll();
+            gc.stats.world_stopped();
         }
 
     }
 
-    // if we reach here, we are using the standard stop-the-world collection
+    // If we reach here, we are using the standard stop-the-world collection,
+    // either because fork was disabled in the first place, or because it was
+    // disabled because of some error.
     mark(stackTop);
     thread_resumeAll();
     gc.stats.world_started();
@@ -1043,9 +1101,9 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     }
                     clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
 
-                    debug(COLLECT_PRINTF) printf("\tcollecting big %x\n", p);
+                    debug(COLLECT_PRINTF) printf("\tcollecting big %p\n", p);
                     pool.pagetable[pn] = B_FREE;
-                    pool.freebits.set(bit_i);
+                    pool.freebits.set_group(bit_i, PAGESIZE / 16);
                     freedpages++;
                     if (opts.options.mem_stomp)
                         memset(p, 0xF3, PAGESIZE);
@@ -1054,7 +1112,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                         pn++;
                         pool.pagetable[pn] = B_FREE;
                         bit_i += bit_stride;
-                        pool.freebits.set(bit_i);
+                        pool.freebits.set_group(bit_i, PAGESIZE / 16);
                         freedpages++;
 
                         if (opts.options.mem_stomp)
@@ -1097,10 +1155,8 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     if (!pool.freebits.test(bit_i))
                         goto Lnotfree;
                 }
-                // we don't need to explicitly set the freebit here because all
-                // freebits were already set, including the bit used for the
-                // whole freed page (bit_base).
                 pool.pagetable[pn] = B_FREE;
+                pool.freebits.set_group(bit_base, PAGESIZE / 16);
                 recoveredpages++;
                 continue;
 
@@ -1200,6 +1256,13 @@ body
 }
 
 
+void disable_fork()
+{
+    // we have to disable both options, as eager_alloc assumes fork is enabled
+    opts.options.fork = false;
+    opts.options.eager_alloc = false;
+}
+
 
 void initialize()
 {
@@ -1209,6 +1272,9 @@ void initialize()
     // If we are going to fork, make sure we have the needed OS support
     if (opts.options.fork)
         opts.options.fork = os.HAVE_SHARED && os.HAVE_FORK;
+    // Eager allocation is only possible when forking
+    if (!opts.options.fork)
+        opts.options.eager_alloc = false;
     gc.lock = GCLock.classinfo;
     gc.inited = 1;
     setStackBottom(rt_stackBottom());
@@ -1612,13 +1678,9 @@ private void free(void *p)
         // Free pages
         size_t npages = 1;
         size_t n = pagenum;
-        pool.freebits.set(bit_i);
-        size_t bit_stride = PAGESIZE / 16;
-        while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS) {
+        pool.freebits.set_group(bit_i, PAGESIZE / 16);
+        while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
             npages++;
-            bit_i += bit_stride;
-            pool.freebits.set(bit_i);
-        }
         if (opts.options.mem_stomp)
             memset(p, 0xF2, npages * PAGESIZE);
         pool.freePages(pagenum, npages);
@@ -1945,6 +2007,13 @@ struct Pool
         scan.alloc(nbits); // only used in the mark phase
         finals.alloc(nbits); // not used by the mark phase
         noscan.alloc(nbits); // mark phase *MUST* have a snapshot
+
+        // all is free when we start
+        freebits.set_all();
+
+        // avoid accidental sweeping of new pools while using eager allocation
+        if (gc.mark_proc_pid)
+            mark.set_all();
 
         pagetable = cast(ubyte*) cstdlib.malloc(npages);
         if (!pagetable)

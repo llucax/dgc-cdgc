@@ -32,6 +32,16 @@ module rt.gc.cdgc.os;
 
 // Public interface/Documentation
 
+/**
+ * Possible results for the wait_pid() function.
+ */
+enum WRes
+{
+    DONE, /// The process has finished successfully
+    RUNNING, /// The process is still running
+    ERROR /// There was an error waiting for the process
+}
+
 version (D_Ddoc) {
 
 /**
@@ -42,8 +52,16 @@ version (D_Ddoc) {
  */
 const HAVE_FORK = true;
 
+/**
+ * Wait for a process with PID pid to finish.
+ *
+ * If block is false, this function will not block, and return WRes.RUNNING if
+ * the process is still running. Otherwise it will return always WRes.DONE
+ * (unless there is an error, in which case WRes.ERROR is returned).
+ */
+WRes wait_pid(pid_t pid, bool block = true);
+
 public import tango.stdc.posix.unistd: pid_t, fork;
-public import tango.stdc.posix.sys.wait: waitpid;
 
 }
 
@@ -51,14 +69,25 @@ public import tango.stdc.posix.sys.wait: waitpid;
 else version (Posix) {
     enum { HAVE_FORK = true }
     public import tango.stdc.posix.unistd: pid_t, fork;
-    public import tango.stdc.posix.sys.wait: waitpid;
+    import tango.stdc.posix.sys.wait: waitpid, WNOHANG;
+    public WRes wait_pid(pid_t pid, bool block = true) {
+        int status = void;
+        pid_t waited_pid = waitpid(pid, &status, block ? 0 : WNOHANG);
+        if (waited_pid == 0)
+            return WRes.RUNNING;
+        assert (waited_pid == pid);
+        assert (status == 0);
+        if (waited_pid != pid || status != 0)
+            return WRes.ERROR;
+        return WRes.DONE;
+    }
 }
 
 else {
     enum { HAVE_FORK = false }
     alias int pid_t;
     pid_t fork() { assert (false); return -1; }
-    pid_t waitpid(pid_t, int*, int) { assert (false); return -1; }
+    WRes wait_pid(pid_t, bool = true) { assert (false); return false; }
 }
 
 
