@@ -89,8 +89,8 @@ void process_option(char* opt_name, char* opt_value)
         options.mem_stomp = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "conservative"))
         options.conservative = parse_bool(opt_value);
-    else if (cstr_eq(opt_name, "no_fork"))
-        options.fork = !parse_bool(opt_value);
+    else if (cstr_eq(opt_name, "fork"))
+        options.fork = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "eager_alloc"))
         options.eager_alloc = parse_bool(opt_value);
 }
@@ -164,7 +164,7 @@ unittest
         assert (fork == true);
         assert (eager_alloc == true);
     }
-    parse("mem_stomp=0:verbose=2:conservative:no_fork=10:eager_alloc=0");
+    parse("mem_stomp=0:verbose=2:conservative:fork=0:eager_alloc=0");
     with (options) {
         assert (verbose == 2);
         assert (log_file[0] == '\0');
