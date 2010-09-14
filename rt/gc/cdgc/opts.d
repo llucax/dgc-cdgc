@@ -35,6 +35,7 @@ module rt.gc.cdgc.opts;
 
 import cstdlib = tango.stdc.stdlib;
 import cstring = tango.stdc.string;
+import cerrno = tango.stdc.errno;
 
 
 private:
@@ -54,6 +55,8 @@ struct Options
     bool conservative = false;
     bool fork = true;
     bool eager_alloc = true;
+    size_t prealloc_psize = 0;
+    size_t prealloc_npools = 0;
 }
 
 package Options options;
@@ -70,6 +73,31 @@ bool parse_bool(char* value)
     if (value[0] == '\0')
         return true;
     return (cstdlib.atoi(value) != 0);
+}
+
+
+void parse_prealloc(char* value)
+{
+    char* end;
+    cerrno.errno = 0;
+    long size = cstdlib.strtol(value, &end, 10);
+    if (end == value || cerrno.errno) // error parsing
+        return;
+    size *= 1024 * 1024; // size is supposed to be in MiB
+    long npools = 1;
+    if (*end == 'x') { // number of pools specified
+        char* start = end + 1;
+        npools = cstdlib.strtol(start, &end, 10);
+        if (*end != '\0' || end == start || cerrno.errno) // error parsing
+            return;
+    }
+    else if (*end != '\0') { // don't accept trailing garbage
+        return;
+    }
+    if (size > 0 && npools > 0) {
+        options.prealloc_psize = size;
+        options.prealloc_npools = npools;
+    }
 }
 
 
@@ -93,6 +121,8 @@ void process_option(char* opt_name, char* opt_value)
         options.fork = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "eager_alloc"))
         options.eager_alloc = parse_bool(opt_value);
+    else if (cstr_eq(opt_name, "pre_alloc"))
+        parse_prealloc(opt_value);
 }
 
 
@@ -153,6 +183,8 @@ unittest
         assert (conservative == false);
         assert (fork == true);
         assert (eager_alloc == true);
+        assert (prealloc_psize == 0);
+        assert (prealloc_npools == 0);
     }
     parse("mem_stomp");
     with (options) {
@@ -163,6 +195,8 @@ unittest
         assert (conservative == false);
         assert (fork == true);
         assert (eager_alloc == true);
+        assert (prealloc_psize == 0);
+        assert (prealloc_npools == 0);
     }
     parse("mem_stomp=0:verbose=2:conservative:fork=0:eager_alloc=0");
     with (options) {
@@ -173,6 +207,8 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (prealloc_psize == 0);
+        assert (prealloc_npools == 0);
     }
     parse("log_file=12345 67890:verbose=1:sentinel=4:mem_stomp=1");
     with (options) {
@@ -183,6 +219,116 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (prealloc_psize == 0);
+        assert (prealloc_npools == 0);
+    }
+    parse("pre_alloc");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 0);
+        assert (prealloc_npools == 0);
+    }
+    parse("pre_alloc=1");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 1 * 1024 * 1024);
+        assert (prealloc_npools == 1);
+    }
+    parse("pre_alloc=5a");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 1 * 1024 * 1024);
+        assert (prealloc_npools == 1);
+    }
+    parse("pre_alloc=5x");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 1 * 1024 * 1024);
+        assert (prealloc_npools == 1);
+    }
+    parse("pre_alloc=09x010");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 9 * 1024 * 1024);
+        assert (prealloc_npools == 10);
+    }
+    parse("pre_alloc=5x2");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
+    }
+    parse("pre_alloc=9x5x");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
+    }
+    parse("pre_alloc=9x-5");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
+    }
+    parse("pre_alloc=0x3x0x4");
+    with (options) {
+        assert (verbose == 1);
+        assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
+        assert (sentinel == true);
+        assert (mem_stomp == true);
+        assert (conservative == true);
+        assert (fork == false);
+        assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
     }
     parse(null);
     with (options) {
@@ -193,6 +339,8 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
     }
     parse("");
     with (options) {
@@ -203,6 +351,8 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
     }
     parse(":");
     with (options) {
@@ -213,6 +363,8 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
     }
     parse("::::");
     with (options) {
@@ -223,6 +375,8 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (prealloc_psize == 5 * 1024 * 1024);
+        assert (prealloc_npools == 2);
     }
 }
 

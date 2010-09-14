@@ -1279,6 +1279,11 @@ void initialize()
     gc.inited = 1;
     setStackBottom(rt_stackBottom());
     gc.stats = Stats(gc);
+    if (opts.options.prealloc_npools) {
+        size_t pages = (opts.options.prealloc_psize + PAGESIZE - 1) / PAGESIZE;
+        for (size_t i = 0; i < opts.options.prealloc_npools; ++i)
+            newPool(pages);
+    }
 }
 
 
