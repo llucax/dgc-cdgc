@@ -99,6 +99,11 @@ package bool has_pointermap(uint attrs)
     return !opts.options.conservative && !(attrs & BlkAttr.NO_SCAN);
 }
 
+private size_t round_up(size_t n, size_t to)
+{
+    return (n + to - 1) / to;
+}
+
 private
 {
     alias void delegate(Object) DEvent;
@@ -392,7 +397,7 @@ Bins findBin(size_t size)
 size_t reserve(size_t size)
 {
     assert(size != 0);
-    size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
+    size_t npages = round_up(size, PAGESIZE);
     Pool*  pool = newPool(npages);
 
     if (!pool)
@@ -448,7 +453,7 @@ void* bigAlloc(size_t size, out Pool* pool)
     void*  p;
     int    state;
 
-    npages = (size + PAGESIZE - 1) / PAGESIZE;
+    npages = round_up(size, PAGESIZE);
 
     for (state = 0; ; )
     {
@@ -1280,7 +1285,7 @@ void initialize()
     setStackBottom(rt_stackBottom());
     gc.stats = Stats(gc);
     if (opts.options.prealloc_npools) {
-        size_t pages = (opts.options.prealloc_psize + PAGESIZE - 1) / PAGESIZE;
+        size_t pages = round_up(opts.options.prealloc_psize, PAGESIZE);
         for (size_t i = 0; i < opts.options.prealloc_npools; ++i)
             newPool(pages);
     }
@@ -1379,8 +1384,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
         if (!p)
             onOutOfMemoryError();
         assert (pool !is null);
-        // Round the size up to the number of pages needed to store it
-        size_t npages = (size + PAGESIZE - 1) / PAGESIZE;
+        size_t npages = round_up(size, PAGESIZE);
         capacity = npages * PAGESIZE;
         bit_i = (p - pool.baseAddr) / 16;
     }
@@ -1487,7 +1491,7 @@ private void *realloc(void *p, size_t size, uint attrs,
             if (blk_size >= PAGESIZE && size >= PAGESIZE)
             {
                 auto psz = blk_size / PAGESIZE;
-                auto newsz = (size + PAGESIZE - 1) / PAGESIZE;
+                auto newsz = round_up(size, PAGESIZE);
                 if (newsz == psz)
                     return p;
 
@@ -1611,8 +1615,8 @@ body
         return 0; // cannot extend buckets
 
     auto psz = blk_size / PAGESIZE;
-    auto minsz = (minsize + PAGESIZE - 1) / PAGESIZE;
-    auto maxsz = (maxsize + PAGESIZE - 1) / PAGESIZE;
+    auto minsz = round_up(minsize, PAGESIZE);
+    auto maxsz = round_up(maxsize, PAGESIZE);
 
     auto pagenum = (p - pool.baseAddr) / PAGESIZE;
 
