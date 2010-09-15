@@ -444,89 +444,50 @@ void minimize()
  * Allocate a chunk of memory that is larger than a page.
  * Return null if out of memory.
  */
-void* bigAlloc(size_t size, out Pool* pool)
+void* bigAlloc(size_t npages, out Pool* pool, size_t* pn)
 {
-    size_t npages;
-    size_t n;
-    size_t pn;
-    size_t freedpages;
-    void*  p;
-    int    state;
+    // This code could use some refinement when repeatedly
+    // allocating very large arrays.
 
-    npages = round_up(size, PAGESIZE);
-
-    for (state = 0; ; )
+    void* find_block()
     {
-        // This code could use some refinement when repeatedly
-        // allocating very large arrays.
-
-        for (n = 0; n < gc.pools.length; n++)
+        for (size_t n = 0; n < gc.pools.length; n++)
         {
             pool = gc.pools[n];
-            pn = pool.allocPages(npages);
-            if (pn != OPFAIL)
-                goto L1;
+            *pn = pool.allocPages(npages);
+            if (*pn != OPFAIL)
+                return pool.baseAddr + *pn * PAGESIZE;
         }
-
-        // Failed
-        switch (state)
-        {
-        case 0:
-            if (gc.disabled)
-            {
-                state = 1;
-                continue;
-            }
-            // Try collecting
-            freedpages = fullcollectshell();
-            if (freedpages >= gc.pools.length * ((POOLSIZE / PAGESIZE) / 4))
-            {
-                state = 1;
-                continue;
-            }
-            // Release empty pools to prevent bloat
-            minimize();
-            // Allocate new pool
-            pool = newPool(npages);
-            if (!pool)
-            {
-                state = 2;
-                continue;
-            }
-            pn = pool.allocPages(npages);
-            assert(pn != OPFAIL);
-            goto L1;
-        case 1:
-            // Release empty pools to prevent bloat
-            minimize();
-            // Allocate new pool
-            pool = newPool(npages);
-            if (!pool)
-                goto Lnomemory;
-            pn = pool.allocPages(npages);
-            assert(pn != OPFAIL);
-            goto L1;
-        case 2:
-            goto Lnomemory;
-        default:
-            assert(false);
-        }
+        return null;
     }
 
-  L1:
-    size_t bit_i = pn * (PAGESIZE / 16);
-    pool.freebits.clear(bit_i);
-    pool.pagetable[pn] = B_PAGE;
-    if (npages > 1)
-        memset(&pool.pagetable[pn + 1], B_PAGEPLUS, npages - 1);
-    p = pool.baseAddr + pn * PAGESIZE;
-    memset(cast(char *)p + size, 0, npages * PAGESIZE - size);
-    if (opts.options.mem_stomp)
-        memset(p, 0xF1, size);
-    return p;
+    void* alloc_more()
+    {
+        // Release empty pools to prevent bloat
+        minimize();
+        // Allocate new pool
+        pool = newPool(npages);
+        if (!pool)
+            return null; // let malloc handle the error
+        *pn = pool.allocPages(npages);
+        assert(*pn != OPFAIL);
+        return pool.baseAddr + *pn * PAGESIZE;
+    }
 
-  Lnomemory:
-    return null; // let mallocNoSync handle the error
+    if (void* p = find_block())
+        return p;
+
+    if (gc.disabled)
+        return alloc_more();
+
+    // Try collecting
+    size_t freedpages = fullcollectshell();
+    if (freedpages >= gc.pools.length * ((POOLSIZE / PAGESIZE) / 4)) {
+        if (void* p = find_block())
+            return p;
+    }
+
+    return alloc_more();
 }
 
 
@@ -1380,13 +1341,24 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
     }
     else
     {
-        p = bigAlloc(size, pool);
+        size_t pn;
+        size_t npages = round_up(size, PAGESIZE);
+        p = bigAlloc(npages, pool, &pn);
         if (!p)
             onOutOfMemoryError();
         assert (pool !is null);
-        size_t npages = round_up(size, PAGESIZE);
+
         capacity = npages * PAGESIZE;
-        bit_i = (p - pool.baseAddr) / 16;
+        bit_i = pn * (PAGESIZE / 16);
+        pool.freebits.clear(bit_i);
+        pool.pagetable[pn] = B_PAGE;
+        if (npages > 1)
+            memset(&pool.pagetable[pn + 1], B_PAGEPLUS, npages - 1);
+        p = pool.baseAddr + pn * PAGESIZE;
+        memset(cast(char *)p + size, 0, npages * PAGESIZE - size);
+        if (opts.options.mem_stomp)
+            memset(p, 0xF1, size);
+
     }
 
     // Store the bit mask AFTER SENTINEL_POST
