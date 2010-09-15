@@ -416,6 +416,9 @@ void minimize()
     if (gc.mark_proc_pid != 0)
         return;
 
+    if (gc.pools.length == 0)
+        return;
+
     size_t n;
     size_t pn;
     Pool* pool;
@@ -1312,6 +1315,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
                 {
                     //newPool(1);
                 }
+                minimize();
             }
             if (!gc.free_list[bin] && !allocPage(bin))
             {
