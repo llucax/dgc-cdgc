@@ -216,6 +216,11 @@ struct GC
     /// max(pool.topAddr)
     byte *max_addr;
 
+    /// Total heap memory
+    size_t total_mem;
+    /// Free heap memory
+    size_t free_mem;
+
     /// Free list for each size
     List*[B_MAX] free_list;
 
@@ -241,6 +246,8 @@ bool Invariant()
 {
     assert (gc !is null);
     if (gc.inited) {
+        size_t total_mem = 0;
+        size_t free_mem = 0;
         for (size_t i = 0; i < gc.pools.length; i++) {
             Pool* pool = gc.pools[i];
             pool.Invariant();
@@ -250,6 +257,10 @@ bool Invariant()
                 assert(*pool < *gc.pools[i + 1]);
             else if (i + 1 == gc.pools.length)
                 assert(gc.max_addr == pool.topAddr);
+            total_mem += pool.npages * PAGESIZE;
+            for (size_t pn = 0; pn < pool.npages; ++pn)
+                if (pool.pagetable[pn] == B_FREE)
+                    free_mem += PAGESIZE;
         }
 
         gc.roots.Invariant();
@@ -269,8 +280,11 @@ bool Invariant()
                 assert (p >= pool.baseAddr);
                 assert (p < pool.topAddr);
                 assert (pool.freebits.test((p - pool.baseAddr) / 16));
+                free_mem += binsize[i];
             }
         }
+        assert (gc.total_mem == total_mem);
+        assert (gc.free_mem == free_mem);
     }
     return true;
 }
@@ -408,8 +422,11 @@ size_t reserve(size_t size)
 
 /**
  * Minimizes physical memory usage by returning free pools to the OS.
+ *
+ * If full is false, keep some pools alive if the resulting free memory would
+ * be too small.
  */
-void minimize()
+void minimize(bool full = true)
 {
     // Disabled if a parallel collection is in progress because the shared mark
     // bits of the freed pool might be used by the mark process
@@ -419,13 +436,10 @@ void minimize()
     if (gc.pools.length == 0)
         return;
 
-    size_t n;
-    size_t pn;
-    Pool* pool;
-
-    for (n = 0; n < gc.pools.length; n++)
+    for (size_t n = 0; n < gc.pools.length; n++)
     {
-        pool = gc.pools[n];
+        Pool* pool = gc.pools[n];
+        size_t pn;
         for (pn = 0; pn < pool.npages; pn++)
         {
             if (cast(Bins)pool.pagetable[pn] != B_FREE)
@@ -433,6 +447,16 @@ void minimize()
         }
         if (pn < pool.npages)
             continue;
+        // Free pool
+        size_t pool_size = pool.npages * PAGESIZE;
+        if (!full) {
+            double percent_free = (gc.free_mem - pool_size) * 100.0 /
+                    (gc.total_mem - pool_size);
+            if (percent_free < opts.options.min_free)
+                continue; // not enough free, don't remove this pool
+        }
+        gc.total_mem -= pool_size;
+        gc.free_mem -= pool_size;
         pool.Dtor();
         cstdlib.free(pool);
         gc.pools.remove_at(n);
@@ -447,8 +471,9 @@ void minimize()
  * Allocate a chunk of memory that is larger than a page.
  * Return null if out of memory.
  */
-void* bigAlloc(size_t npages, out Pool* pool, size_t* pn)
+void* bigAlloc(size_t npages, out Pool* pool, size_t* pn, bool* collected)
 {
+    *collected = false;
     // This code could use some refinement when repeatedly
     // allocating very large arrays.
 
@@ -466,8 +491,6 @@ void* bigAlloc(size_t npages, out Pool* pool, size_t* pn)
 
     void* alloc_more()
     {
-        // Release empty pools to prevent bloat
-        minimize();
         // Allocate new pool
         pool = newPool(npages);
         if (!pool)
@@ -485,7 +508,8 @@ void* bigAlloc(size_t npages, out Pool* pool, size_t* pn)
 
     // Try collecting
     size_t freedpages = fullcollectshell();
-    if (freedpages >= gc.pools.length * ((POOLSIZE / PAGESIZE) / 4)) {
+    *collected = true;
+    if (freedpages >= npages) {
         if (void* p = find_block())
             return p;
     }
@@ -541,6 +565,9 @@ Pool *newPool(size_t npages)
     assert (inserted_pool is pool);
     gc.min_addr = gc.pools[0].baseAddr;
     gc.max_addr = gc.pools[gc.pools.length - 1].topAddr;
+    size_t pool_size = pool.topAddr - pool.baseAddr;
+    gc.total_mem += pool_size;
+    gc.free_mem += pool_size;
     return pool;
 }
 
@@ -985,6 +1012,7 @@ size_t sweep()
     debug(COLLECT_PRINTF) printf("\tsweep\n");
     gc.p_cache = null;
     gc.size_cache = 0;
+    gc.free_mem = 0; // will be recalculated
     size_t freedpages = 0;
     size_t freed = 0;
     for (size_t n = 0; n < gc.pools.length; n++)
@@ -1074,6 +1102,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                     pool.pagetable[pn] = B_FREE;
                     pool.freebits.set_group(bit_i, PAGESIZE / 16);
                     freedpages++;
+                    gc.free_mem += PAGESIZE;
                     if (opts.options.mem_stomp)
                         memset(p, 0xF3, PAGESIZE);
                     while (pn + 1 < pool.npages && pool.pagetable[pn + 1] == B_PAGEPLUS)
@@ -1083,6 +1112,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                         bit_i += bit_stride;
                         pool.freebits.set_group(bit_i, PAGESIZE / 16);
                         freedpages++;
+                        gc.free_mem += PAGESIZE;
 
                         if (opts.options.mem_stomp)
                         {
@@ -1091,6 +1121,9 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                         }
                     }
                 }
+            }
+            else if (bin == B_FREE) {
+                gc.free_mem += PAGESIZE;
             }
         }
     }
@@ -1127,6 +1160,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                 pool.pagetable[pn] = B_FREE;
                 pool.freebits.set_group(bit_base, PAGESIZE / 16);
                 recoveredpages++;
+                gc.free_mem += PAGESIZE;
                 continue;
 
              Lnotfree:
@@ -1145,6 +1179,7 @@ version(none) // BUG: doesn't work because freebits() must also be cleared
                         if (list.pool != pool)
                             list.pool = pool;
                         gc.free_list[bin] = list;
+                        gc.free_mem += binsize[bin];
                     }
                 }
             }
@@ -1293,6 +1328,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
     Pool* pool = void;
     size_t bit_i = void;
     size_t capacity = void; // to figure out where to store the bitmask
+    bool collected = false;
     if (bin < B_PAGE)
     {
         p = gc.free_list[bin];
@@ -1315,7 +1351,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
                 {
                     //newPool(1);
                 }
-                minimize();
+                collected = true;
             }
             if (!gc.free_list[bin] && !allocPage(bin))
             {
@@ -1347,7 +1383,7 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
     {
         size_t pn;
         size_t npages = round_up(size, PAGESIZE);
-        p = bigAlloc(npages, pool, &pn);
+        p = bigAlloc(npages, pool, &pn, &collected);
         if (!p)
             onOutOfMemoryError();
         assert (pool !is null);
@@ -1382,6 +1418,21 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
     if (attrs) {
         setAttr(pool, bit_i, attrs);
         assert (bin >= B_PAGE || !pool.freebits.test(bit_i));
+    }
+
+    gc.free_mem -= capacity;
+    if (collected) {
+        // If there is not enough free memory, allocate a new pool big enough
+        // to have at least the min_free% of the total heap free. If there is
+        // too much free memory, try to free some empty pools.
+        double percent_free = gc.free_mem * 100.0 / gc.total_mem;
+        if (percent_free < opts.options.min_free) {
+            auto pool_size = gc.total_mem * 1.0 / opts.options.min_free
+                    - gc.free_mem;
+            newPool(round_up(cast(size_t)pool_size, PAGESIZE));
+        }
+        else
+            minimize(false);
     }
 
     return p;
@@ -1481,6 +1532,7 @@ private void *realloc(void *p, size_t size, uint attrs,
                                 blk_size - size - pm_bitmask_size);
                     pool.freePages(pagenum + newsz, psz - newsz);
                     auto new_blk_size = (PAGESIZE * newsz);
+                    gc.free_mem += blk_size - new_blk_size;
                     // update the size cache, assuming that is very likely the
                     // size of this block will be queried in the near future
                     pool.update_cache(p, new_blk_size);
@@ -1505,6 +1557,7 @@ private void *realloc(void *p, size_t size, uint attrs,
                             memset(pool.pagetable + pagenum +
                                     psz, B_PAGEPLUS, newsz - psz);
                             auto new_blk_size = (PAGESIZE * newsz);
+                            gc.free_mem -= new_blk_size - blk_size;
                             // update the size cache, assuming that is very
                             // likely the size of this block will be queried in
                             // the near future
@@ -1620,6 +1673,7 @@ body
     memset(pool.pagetable + pagenum + psz, B_PAGEPLUS, sz);
     gc.p_cache = null;
     gc.size_cache = 0;
+    gc.free_mem -= new_size - blk_size;
     // update the size cache, assuming that is very likely the size of this
     // block will be queried in the near future
     pool.update_cache(p, new_size);
@@ -1666,9 +1720,11 @@ private void free(void *p)
         pool.freebits.set_group(bit_i, PAGESIZE / 16);
         while (++n < pool.npages && pool.pagetable[n] == B_PAGEPLUS)
             npages++;
+        size_t size = npages * PAGESIZE;
         if (opts.options.mem_stomp)
-            memset(p, 0xF2, npages * PAGESIZE);
+            memset(p, 0xF2, size);
         pool.freePages(pagenum, npages);
+        gc.free_mem += size;
         // just in case we were caching this pointer
         pool.clear_cache(p);
     }
@@ -1684,7 +1740,11 @@ private void free(void *p)
         list.pool = pool;
         gc.free_list[bin] = list;
         pool.freebits.set(bit_i);
+        gc.free_mem += binsize[bin];
     }
+    double percent_free = gc.free_mem * 100.0 / gc.total_mem;
+    if (percent_free > opts.options.min_free)
+        minimize(false);
 }
 
 

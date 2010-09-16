@@ -55,6 +55,7 @@ struct Options
     bool conservative = false;
     bool fork = true;
     bool eager_alloc = true;
+    uint min_free = 15; // percent of the heap (0-100)
     size_t prealloc_psize = 0;
     size_t prealloc_npools = 0;
 }
@@ -101,6 +102,16 @@ void parse_prealloc(char* value)
 }
 
 
+void parse_min_free(char* value)
+{
+    char* end;
+    long free = cstdlib.strtol(value, &end, 10);
+    if (*end != '\0' || end == value || cerrno.errno || free < 0 || free > 100)
+        return;
+    options.min_free = free;
+}
+
+
 void process_option(char* opt_name, char* opt_value)
 {
     if (cstr_eq(opt_name, "verbose"))
@@ -121,6 +132,8 @@ void process_option(char* opt_name, char* opt_value)
         options.fork = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "eager_alloc"))
         options.eager_alloc = parse_bool(opt_value);
+    else if (cstr_eq(opt_name, "min_free"))
+        parse_min_free(opt_value);
     else if (cstr_eq(opt_name, "pre_alloc"))
         parse_prealloc(opt_value);
 }
@@ -185,6 +198,7 @@ unittest
         assert (eager_alloc == true);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
+        assert (min_free == 15);
     }
     parse("mem_stomp");
     with (options) {
@@ -197,6 +211,7 @@ unittest
         assert (eager_alloc == true);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
+        assert (min_free == 15);
     }
     parse("mem_stomp=0:verbose=2:conservative:fork=0:eager_alloc=0");
     with (options) {
@@ -209,6 +224,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
+        assert (min_free == 15);
     }
     parse("log_file=12345 67890:verbose=1:sentinel=4:mem_stomp=1");
     with (options) {
@@ -222,7 +238,7 @@ unittest
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
     }
-    parse("pre_alloc");
+    parse("pre_alloc:min_free=30");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -233,6 +249,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
+        assert (min_free == 30);
     }
     parse("pre_alloc=1");
     with (options) {
@@ -245,8 +262,9 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 1 * 1024 * 1024);
         assert (prealloc_npools == 1);
+        assert (min_free == 30);
     }
-    parse("pre_alloc=5a");
+    parse("pre_alloc=5a:min_free=101");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -257,8 +275,9 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 1 * 1024 * 1024);
         assert (prealloc_npools == 1);
+        assert (min_free == 30);
     }
-    parse("pre_alloc=5x");
+    parse("pre_alloc=5x:min_free=-1");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -269,8 +288,9 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 1 * 1024 * 1024);
         assert (prealloc_npools == 1);
+        assert (min_free == 30);
     }
-    parse("pre_alloc=09x010");
+    parse("pre_alloc=09x010:min_free=10a");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -281,8 +301,9 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 9 * 1024 * 1024);
         assert (prealloc_npools == 10);
+        assert (min_free == 30);
     }
-    parse("pre_alloc=5x2");
+    parse("pre_alloc=5x2:min_free=1.0");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -293,8 +314,9 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 30);
     }
-    parse("pre_alloc=9x5x");
+    parse("pre_alloc=9x5x:min_free=-1");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -305,8 +327,9 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 30);
     }
-    parse("pre_alloc=9x-5");
+    parse("pre_alloc=9x-5:min_free=0");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -317,8 +340,9 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 0);
     }
-    parse("pre_alloc=0x3x0x4");
+    parse("pre_alloc=0x3x0x4:min_free=100");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -329,6 +353,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 100);
     }
     parse(null);
     with (options) {
@@ -341,6 +366,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 100);
     }
     parse("");
     with (options) {
@@ -353,6 +379,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 100);
     }
     parse(":");
     with (options) {
@@ -365,6 +392,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 100);
     }
     parse("::::");
     with (options) {
@@ -377,6 +405,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
+        assert (min_free == 100);
     }
 }
 
