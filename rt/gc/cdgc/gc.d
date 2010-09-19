@@ -242,6 +242,13 @@ private T locked(T, alias Code)()
 
 private GC* gc;
 
+
+bool collect_in_progress()
+{
+    return gc.mark_proc_pid != 0;
+}
+
+
 bool Invariant()
 {
     assert (gc !is null);
@@ -428,9 +435,8 @@ size_t reserve(size_t size)
  */
 void minimize(bool full = true)
 {
-    // Disabled if a parallel collection is in progress because the shared mark
-    // bits of the freed pool might be used by the mark process
-    if (gc.mark_proc_pid != 0)
+    // The shared mark bits of the freed pool might be used by the mark process
+    if (collect_in_progress())
         return;
 
     if (gc.pools.length == 0)
@@ -799,7 +805,7 @@ size_t fullcollect(void *stackTop)
     // memory is freed (if that not the case, the caller will allocate more
     // memory and the next time it's exhausted it will run a new collection).
     if (opts.options.eager_alloc) {
-        if (gc.mark_proc_pid != 0) { // there is a mark process in progress
+        if (collect_in_progress()) {
             os.WRes r = os.wait_pid(gc.mark_proc_pid, false); // don't block
             assert (r != os.WRes.ERROR);
             switch (r) {
@@ -2057,7 +2063,7 @@ struct Pool
         freebits.set_all();
 
         // avoid accidental sweeping of new pools while using eager allocation
-        if (gc.mark_proc_pid)
+        if (collect_in_progress())
             mark.set_all();
 
         pagetable = cast(ubyte*) cstdlib.malloc(npages);
