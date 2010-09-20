@@ -33,9 +33,12 @@
 
 module rt.gc.cdgc.opts;
 
+//debug = PRINTF;
+
 import cstdlib = tango.stdc.stdlib;
 import cstring = tango.stdc.string;
 import cerrno = tango.stdc.errno;
+debug (PRINTF) import tango.stdc.stdio: printf;
 
 
 private:
@@ -61,6 +64,22 @@ struct Options
 }
 
 package Options options;
+
+
+debug (PRINTF)
+void print_options()
+{
+    int b(bool v) { return v; }
+    with (options)
+    printf("rt.gc.cdgc.opts: verbose=%u, log_file='%s', "
+            "malloc_stats_file='%s', collect_stats_file='%s', sentinel=%d, "
+            "mem_stomp=%d, conservative=%d, fork=%d, eager_alloc=%d, "
+            "early_collect=%d, min_free=%u, prealloc_psize=%lu, "
+            "prealloc_npools=%lu\n", verbose, log_file.ptr,
+            malloc_stats_file.ptr, collect_stats_file.ptr, b(sentinel),
+            b(mem_stomp), b(conservative), b(fork), b(eager_alloc),
+            b(early_collect), min_free, prealloc_psize, prealloc_npools);
+}
 
 
 bool cstr_eq(char* s1, char* s2)
@@ -147,8 +166,10 @@ package void parse(char* opts_string)
     opt_value[0] = '\0';
     char* curr = opt_name.ptr;
     size_t i = 0;
-    if (opts_string is null)
+    if (opts_string is null) {
+        debug (PRINTF) printf("rt.gc.cdgc.opts: no options overriden\n");
         return;
+    }
     for (; *opts_string != '\0'; opts_string++)
     {
         char c = *opts_string;
@@ -183,6 +204,7 @@ package void parse(char* opts_string)
         i--;
     curr[i] = '\0';
     process_option(opt_name.ptr, opt_value.ptr);
+    debug (PRINTF) print_options();
 }
 
 
