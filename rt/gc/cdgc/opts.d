@@ -58,7 +58,7 @@ struct Options
     bool conservative = false;
     bool fork = true;
     bool eager_alloc = true;
-    uint min_free = 15; // percent of the heap (0-100)
+    uint min_free = 5; // percent of the heap (0-100)
     size_t prealloc_psize = 0;
     size_t prealloc_npools = 0;
 }
@@ -220,7 +220,7 @@ unittest
         assert (eager_alloc == true);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
-        assert (min_free == 15);
+        assert (min_free == 5);
     }
     parse("mem_stomp");
     with (options) {
@@ -233,7 +233,7 @@ unittest
         assert (eager_alloc == true);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
-        assert (min_free == 15);
+        assert (min_free == 5);
     }
     parse("mem_stomp=0:verbose=2:conservative:fork=0:eager_alloc=0");
     with (options) {
@@ -246,7 +246,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
-        assert (min_free == 15);
+        assert (min_free == 5);
     }
     parse("log_file=12345 67890:verbose=1:sentinel=4:mem_stomp=1");
     with (options) {
@@ -259,6 +259,7 @@ unittest
         assert (eager_alloc == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
+        assert (min_free == 5);
     }
     parse("pre_alloc:min_free=30");
     with (options) {
