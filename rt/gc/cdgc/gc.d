@@ -1464,141 +1464,125 @@ private void *calloc(size_t size, uint attrs, size_t* pm_bitmask)
 private void *realloc(void *p, size_t size, uint attrs,
         size_t* pm_bitmask)
 {
-    if (!size)
-    {
+    if (!size) {
         if (p)
-        {
             free(p);
-            p = null;
-        }
+        return null;
     }
-    else if (!p)
-    {
-        p = malloc(size, attrs, pm_bitmask);
+
+    if (p is null)
+        return malloc(size, attrs, pm_bitmask);
+
+    Pool* pool = findPool(p);
+    if (pool is null)
+        return null;
+
+    // Set or retrieve attributes as appropriate
+    auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
+    if (attrs) {
+        clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
+        setAttr(pool, bit_i, attrs);
     }
     else
-    {
-        Pool* pool = findPool(p);
-        if (pool is null)
-            return null;
+        attrs = getAttr(pool, bit_i);
 
-        // Set or retrieve attributes as appropriate
-        auto bit_i = cast(size_t)(p - pool.baseAddr) / 16;
-        if (attrs) {
-            clrAttr(pool, bit_i, BlkAttr.ALL_BITS);
-            setAttr(pool, bit_i, attrs);
+    void* blk_base_addr = pool.findBase(p);
+    size_t blk_size = pool.findSize(p);
+    bool has_pm = has_pointermap(attrs);
+    size_t pm_bitmask_size = 0;
+    if (has_pm) {
+        pm_bitmask_size = size_t.sizeof;
+        // Retrieve pointer map bit mask if appropriate
+        if (pm_bitmask is null) {
+            auto end_of_blk = cast(size_t**)(
+                    blk_base_addr + blk_size - size_t.sizeof);
+            pm_bitmask = *end_of_blk;
         }
-        else
-            attrs = getAttr(pool, bit_i);
+    }
 
-        void* blk_base_addr = pool.findBase(p);
-        size_t blk_size = pool.findSize(p);
-        bool has_pm = has_pointermap(attrs);
-        size_t pm_bitmask_size = 0;
-        if (has_pm) {
-            pm_bitmask_size = size_t.sizeof;
-            // Retrieve pointer map bit mask if appropriate
-            if (pm_bitmask is null) {
+    if (opts.options.sentinel) {
+        sentinel_Invariant(p);
+        size_t sentinel_stored_size = *sentinel_size(p);
+        if (sentinel_stored_size != size) {
+            void* p2 = malloc(size, attrs, pm_bitmask);
+            if (sentinel_stored_size < size)
+                size = sentinel_stored_size;
+            cstring.memcpy(p2, p, size);
+            p = p2;
+        }
+        return p;
+    }
+
+    size += pm_bitmask_size;
+    if (blk_size >= PAGESIZE && size >= PAGESIZE) {
+        auto psz = blk_size / PAGESIZE;
+        auto newsz = round_up(size, PAGESIZE);
+        if (newsz == psz)
+            return p;
+
+        auto pagenum = (p - pool.baseAddr) / PAGESIZE;
+
+        if (newsz < psz) {
+            // Shrink in place
+            if (opts.options.mem_stomp)
+                memset(p + size - pm_bitmask_size, 0xF2,
+                        blk_size - size - pm_bitmask_size);
+            pool.freePages(pagenum + newsz, psz - newsz);
+            auto new_blk_size = (PAGESIZE * newsz);
+            gc.free_mem += blk_size - new_blk_size;
+            // update the size cache, assuming that is very likely the
+            // size of this block will be queried in the near future
+            pool.update_cache(p, new_blk_size);
+            if (has_pm) {
                 auto end_of_blk = cast(size_t**)(blk_base_addr +
-                        blk_size - size_t.sizeof);
-                pm_bitmask = *end_of_blk;
+                        new_blk_size - pm_bitmask_size);
+                *end_of_blk = pm_bitmask;
             }
+            return p;
         }
 
-        if (opts.options.sentinel)
-        {
-            sentinel_Invariant(p);
-            size_t sentinel_stored_size = *sentinel_size(p);
-            if (sentinel_stored_size != size)
-            {
-                void* p2 = malloc(size, attrs, pm_bitmask);
-                if (sentinel_stored_size < size)
-                    size = sentinel_stored_size;
-                cstring.memcpy(p2, p, size);
-                p = p2;
-            }
-        }
-        else
-        {
-            size += pm_bitmask_size;
-            if (blk_size >= PAGESIZE && size >= PAGESIZE)
-            {
-                auto psz = blk_size / PAGESIZE;
-                auto newsz = round_up(size, PAGESIZE);
-                if (newsz == psz)
-                    return p;
-
-                auto pagenum = (p - pool.baseAddr) / PAGESIZE;
-
-                if (newsz < psz)
-                {
-                    // Shrink in place
+        if (pagenum + newsz <= pool.npages) {
+            // Attempt to expand in place
+            for (size_t i = pagenum + psz; 1;) {
+                if (i == pagenum + newsz) {
                     if (opts.options.mem_stomp)
-                        memset(p + size - pm_bitmask_size, 0xF2,
-                                blk_size - size - pm_bitmask_size);
-                    pool.freePages(pagenum + newsz, psz - newsz);
+                        memset(p + blk_size - pm_bitmask_size, 0xF0,
+                                size - blk_size - pm_bitmask_size);
+                    memset(pool.pagetable + pagenum + psz, B_PAGEPLUS,
+                            newsz - psz);
                     auto new_blk_size = (PAGESIZE * newsz);
-                    gc.free_mem += blk_size - new_blk_size;
-                    // update the size cache, assuming that is very likely the
-                    // size of this block will be queried in the near future
+                    gc.free_mem -= new_blk_size - blk_size;
+                    // update the size cache, assuming that is very
+                    // likely the size of this block will be queried in
+                    // the near future
                     pool.update_cache(p, new_blk_size);
                     if (has_pm) {
-                        auto end_of_blk = cast(size_t**)(blk_base_addr +
-                                new_blk_size - pm_bitmask_size);
+                        auto end_of_blk = cast(size_t**)(
+                                blk_base_addr + new_blk_size - pm_bitmask_size);
                         *end_of_blk = pm_bitmask;
                     }
                     return p;
                 }
-                else if (pagenum + newsz <= pool.npages)
-                {
-                    // Attempt to expand in place
-                    for (size_t i = pagenum + psz; 1;)
-                    {
-                        if (i == pagenum + newsz)
-                        {
-                            if (opts.options.mem_stomp)
-                                memset(p + blk_size - pm_bitmask_size,
-                                        0xF0, size - blk_size
-                                        - pm_bitmask_size);
-                            memset(pool.pagetable + pagenum +
-                                    psz, B_PAGEPLUS, newsz - psz);
-                            auto new_blk_size = (PAGESIZE * newsz);
-                            gc.free_mem -= new_blk_size - blk_size;
-                            // update the size cache, assuming that is very
-                            // likely the size of this block will be queried in
-                            // the near future
-                            pool.update_cache(p, new_blk_size);
-                            if (has_pm) {
-                                auto end_of_blk = cast(size_t**)(
-                                        blk_base_addr + new_blk_size -
-                                        pm_bitmask_size);
-                                *end_of_blk = pm_bitmask;
-                            }
-                            return p;
-                        }
-                        if (i == pool.npages)
-                        {
-                            break;
-                        }
-                        if (pool.pagetable[i] != B_FREE)
-                            break;
-                        i++;
-                    }
-                }
-            }
-            // if new size is bigger or less than half
-            if (blk_size < size || blk_size > size * 2)
-            {
-                size -= pm_bitmask_size;
-                blk_size -= pm_bitmask_size;
-                void* p2 = malloc(size, attrs, pm_bitmask);
-                if (blk_size < size)
-                    size = blk_size;
-                cstring.memcpy(p2, p, size);
-                p = p2;
+                if (i == pool.npages)
+                    break;
+                if (pool.pagetable[i] != B_FREE)
+                    break;
+                i++;
             }
         }
     }
+
+    // if new size is bigger or less than half
+    if (blk_size < size || blk_size > size * 2) {
+        size -= pm_bitmask_size;
+        blk_size -= pm_bitmask_size;
+        void* p2 = malloc(size, attrs, pm_bitmask);
+        if (blk_size < size)
+            size = blk_size;
+        cstring.memcpy(p2, p, size);
+        p = p2;
+    }
+
     return p;
 }
 
