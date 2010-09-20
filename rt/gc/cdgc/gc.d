@@ -701,7 +701,7 @@ void mark_range(void *pbot, void *ptop, size_t* pm_bitmask)
 /**
  * Return number of full pages free'd.
  */
-size_t fullcollectshell()
+size_t fullcollectshell(bool early = false)
 {
     gc.stats.collection_started();
     scope (exit)
@@ -769,7 +769,7 @@ size_t fullcollectshell()
         mov sp[EBP],ESP     ;
     }
     }
-    result = fullcollect(sp);
+    result = fullcollect(sp, early);
     version (GNU)
     {
         // nothing to do
@@ -792,35 +792,42 @@ size_t fullcollectshell()
 /**
  *
  */
-size_t fullcollect(void *stackTop)
+size_t fullcollect(void *stackTop, bool early = false)
 {
-    debug(COLLECT_PRINTF) printf("Gcx.fullcollect()\n");
+    debug(COLLECT_PRINTF) printf("Gcx.fullcollect(early=%d)\n",
+            cast(int) early);
 
-    // If eager allocation is used, we need to check first if there is a mark
-    // process running. If there isn't, we start a new one (see the next code
-    // block). If there is, we check if it's still running or already finished.
-    // If it's still running, we tell the caller process no memory has been
-    // recovered (it will allocated more to fulfill the current request).  If
-    // the mark process is done, we lunch the sweep phase and hope enough
-    // memory is freed (if that not the case, the caller will allocate more
-    // memory and the next time it's exhausted it will run a new collection).
-    if (opts.options.eager_alloc) {
-        if (collect_in_progress()) {
-            os.WRes r = os.wait_pid(gc.mark_proc_pid, false); // don't block
-            assert (r != os.WRes.ERROR);
-            switch (r) {
+    // We will block the mutator only if eager allocation is not used and this
+    // is not an early collection.
+    bool block = !opts.options.eager_alloc && !early;
+
+    // If there is a mark process running, check if it already finished.  If
+    // that is the case, we lunch the sweep phase and hope enough memory is
+    // freed.  If it's still running, either we block until the mark phase is
+    // done (and then sweep to finish the collection), or we tell the caller
+    // process no memory has been recovered (it will allocated more to fulfill
+    // the current request if eager allocation is used) and let the mark phase
+    // keep running in parallel.
+    if (collect_in_progress()) {
+        os.WRes r = os.wait_pid(gc.mark_proc_pid, block);
+        assert (r != os.WRes.ERROR);
+        switch (r) {
             case os.WRes.DONE:
-                debug(COLLECT_PRINTF) printf("\t\tmark proc DONE\n");
+                debug(COLLECT_PRINTF) printf("\t\tmark proc DONE (block=%d)\n",
+                        cast(int) block);
                 gc.mark_proc_pid = 0;
                 return sweep();
             case os.WRes.RUNNING:
                 debug(COLLECT_PRINTF) printf("\t\tmark proc RUNNING\n");
-                return 0;
+                if (!block)
+                    return 0;
+                // Something went wrong, if block is true, wait() should never
+                // returned RUNNING.
+                goto case os.WRes.ERROR;
             case os.WRes.ERROR:
                 debug(COLLECT_PRINTF) printf("\t\tmark proc ERROR\n");
                 disable_fork(); // Try to keep going without forking
                 break;
-            }
         }
     }
 
@@ -830,15 +837,14 @@ size_t fullcollect(void *stackTop)
     gc.stats.world_stopped();
 
     // If forking is enabled, we fork() and start a new mark phase in the
-    // child. The parent process will tell the caller that no memory could be
-    // recycled if eager allocation is used, allowing the mutator to keep going
-    // almost instantly (at the expense of more memory consumption because
-    // a new allocation will be triggered to fulfill the current request). If
-    // no eager allocation is used, the parent will wait for the mark phase to
-    // finish before returning control to the mutator, but other threads are
-    // restarted and may run in parallel with the mark phase (unless they
-    // allocate or use the GC themselves, in which case the global GC lock will
-    // stop them).
+    // child. If the collection should not block, the parent process tells the
+    // caller no memory could be recycled immediately (if eager allocation is
+    // used, and this collection was triggered by an allocation, the caller
+    // should allocate more memory to fulfill the request). If the collection
+    // should block, the parent will wait for the mark phase to finish before
+    // returning control to the mutator, but other threads are restarted and
+    // may run in parallel with the mark phase (unless they allocate or use the
+    // GC themselves, in which case the global GC lock will stop them).
     if (opts.options.fork) {
         cstdio.fflush(null); // avoid duplicated FILE* output
         os.pid_t child_pid = os.fork();
@@ -852,16 +858,16 @@ size_t fullcollect(void *stackTop)
             cstdlib.exit(0);
             break; // bogus, will never reach here
         default: // parent process (i.e. the mutator)
-            // start the world again and wait for the mark phase to finish
             thread_resumeAll();
             gc.stats.world_started();
-            if (opts.options.eager_alloc) {
+            if (!block) {
                 gc.mark_proc_pid = child_pid;
                 return 0;
             }
             os.WRes r = os.wait_pid(child_pid); // block until it finishes
             assert (r == os.WRes.DONE);
-            debug(COLLECT_PRINTF) printf("\t\tmark proc DONE (block)\n");
+            debug(COLLECT_PRINTF) printf("\t\tmark proc DONE (block=%d)\n",
+                    cast(int) block);
             if (r == os.WRes.DONE)
                 return sweep();
             debug(COLLECT_PRINTF) printf("\tmark() proc ERROR\n");
@@ -1268,9 +1274,10 @@ body
 
 void disable_fork()
 {
-    // we have to disable both options, as eager_alloc assumes fork is enabled
+    // we have to disable all options that assume fork is enabled
     opts.options.fork = false;
     opts.options.eager_alloc = false;
+    opts.options.early_collect = false;
 }
 
 
@@ -1282,9 +1289,9 @@ void initialize()
     // If we are going to fork, make sure we have the needed OS support
     if (opts.options.fork)
         opts.options.fork = os.HAVE_SHARED && os.HAVE_FORK;
-    // Eager allocation is only possible when forking
+    // Disable fork()-related options if we don't have it
     if (!opts.options.fork)
-        opts.options.eager_alloc = false;
+        disable_fork();
     gc.lock = GCLock.classinfo;
     gc.inited = 1;
     setStackBottom(rt_stackBottom());
@@ -1294,6 +1301,18 @@ void initialize()
         for (size_t i = 0; i < opts.options.prealloc_npools; ++i)
             newPool(pages);
     }
+}
+
+
+// Launch a parallel collection if we don't have enough free memory available
+// (we have less than min_free% of the total heap free).
+void early_collect()
+{
+    if (!opts.options.early_collect || collect_in_progress())
+        return;
+    double percent_free = gc.free_mem * 100.0 / gc.total_mem;
+    if (percent_free < opts.options.min_free)
+        fullcollectshell(true);
 }
 
 
@@ -1428,9 +1447,10 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
 
     gc.free_mem -= capacity;
     if (collected) {
-        // If there is not enough free memory, allocate a new pool big enough
-        // to have at least the min_free% of the total heap free. If there is
-        // too much free memory, try to free some empty pools.
+        // If there is not enough free memory (after a collection), allocate
+        // a new pool big enough to have at least the min_free% of the total
+        // heap free. If the collection left too much free memory, try to free
+        // some empty pools.
         double percent_free = gc.free_mem * 100.0 / gc.total_mem;
         if (percent_free < opts.options.min_free) {
             auto pool_size = gc.total_mem * 1.0 / opts.options.min_free
@@ -1440,6 +1460,8 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
         else
             minimize(false);
     }
+    else
+        early_collect();
 
     return p;
 }
@@ -1561,6 +1583,7 @@ private void *realloc(void *p, size_t size, uint attrs,
                                 blk_base_addr + new_blk_size - pm_bitmask_size);
                         *end_of_blk = pm_bitmask;
                     }
+                    early_collect();
                     return p;
                 }
                 if (i == pool.npages)
@@ -1673,6 +1696,9 @@ body
         auto end_of_blk = cast(size_t**)(blk_base_addr + new_size);
         *end_of_blk = pm_bitmask;
     }
+
+    early_collect();
+
     return new_size;
 }
 

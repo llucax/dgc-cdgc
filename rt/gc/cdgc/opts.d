@@ -58,6 +58,7 @@ struct Options
     bool conservative = false;
     bool fork = true;
     bool eager_alloc = true;
+    bool early_collect = false;
     uint min_free = 5; // percent of the heap (0-100)
     size_t prealloc_psize = 0;
     size_t prealloc_npools = 0;
@@ -151,6 +152,8 @@ void process_option(char* opt_name, char* opt_value)
         options.fork = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "eager_alloc"))
         options.eager_alloc = parse_bool(opt_value);
+    else if (cstr_eq(opt_name, "early_collect"))
+        options.early_collect = parse_bool(opt_value);
     else if (cstr_eq(opt_name, "min_free"))
         parse_min_free(opt_value);
     else if (cstr_eq(opt_name, "pre_alloc"))
@@ -218,6 +221,7 @@ unittest
         assert (conservative == false);
         assert (fork == true);
         assert (eager_alloc == true);
+        assert (early_collect == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
         assert (min_free == 5);
@@ -231,6 +235,7 @@ unittest
         assert (conservative == false);
         assert (fork == true);
         assert (eager_alloc == true);
+        assert (early_collect == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
         assert (min_free == 5);
@@ -244,6 +249,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
         assert (min_free == 5);
@@ -257,11 +263,12 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
         assert (min_free == 5);
     }
-    parse("pre_alloc:min_free=30");
+    parse("pre_alloc:min_free=30:early_collect");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -270,11 +277,12 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == true);
         assert (prealloc_psize == 0);
         assert (prealloc_npools == 0);
         assert (min_free == 30);
     }
-    parse("pre_alloc=1");
+    parse("pre_alloc=1:early_collect=0");
     with (options) {
         assert (verbose == 1);
         assert (cstring.strcmp(log_file.ptr, "12345 67890".ptr) == 0);
@@ -283,6 +291,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 1 * 1024 * 1024);
         assert (prealloc_npools == 1);
         assert (min_free == 30);
@@ -296,6 +305,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 1 * 1024 * 1024);
         assert (prealloc_npools == 1);
         assert (min_free == 30);
@@ -309,6 +319,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 1 * 1024 * 1024);
         assert (prealloc_npools == 1);
         assert (min_free == 30);
@@ -322,6 +333,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 9 * 1024 * 1024);
         assert (prealloc_npools == 10);
         assert (min_free == 30);
@@ -335,6 +347,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 30);
@@ -348,6 +361,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 30);
@@ -361,6 +375,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 0);
@@ -374,6 +389,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 100);
@@ -387,6 +403,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 100);
@@ -400,6 +417,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 100);
@@ -413,6 +431,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 100);
@@ -426,6 +445,7 @@ unittest
         assert (conservative == true);
         assert (fork == false);
         assert (eager_alloc == false);
+        assert (early_collect == false);
         assert (prealloc_psize == 5 * 1024 * 1024);
         assert (prealloc_npools == 2);
         assert (min_free == 100);
