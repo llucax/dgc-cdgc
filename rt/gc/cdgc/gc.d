@@ -1323,12 +1323,12 @@ private void *malloc(size_t size, uint attrs, size_t* pm_bitmask)
 {
     assert(size != 0);
 
+    void *p = null;
+    Bins bin;
+
     gc.stats.malloc_started(size, attrs, pm_bitmask);
     scope (exit)
         gc.stats.malloc_finished(p);
-
-    void *p = null;
-    Bins bin;
 
     if (opts.options.sentinel)
         size += SENTINEL_EXTRA;
