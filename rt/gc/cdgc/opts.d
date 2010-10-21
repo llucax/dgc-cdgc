@@ -55,7 +55,10 @@ struct Options
     char[MAX_OPT_LEN] collect_stats_file = "";
     bool sentinel = false;
     bool mem_stomp = false;
-    bool conservative = false;
+    version (D_HavePointerMap)
+        bool conservative = false;
+    else
+        bool conservative = true;
     bool fork = true;
     bool eager_alloc = true;
     bool early_collect = false;
