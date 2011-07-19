@@ -1981,8 +1981,8 @@ void weakpointerDestroy( void* p )
         return locked!(void, () {
             if (wp.reference)
                 rt_detachDisposeEvent(wp.reference, &wp.ondestroy);
+            cstdlib.free(wp);
         })();
-        cstdlib.free(wp);
     }
 }
 
